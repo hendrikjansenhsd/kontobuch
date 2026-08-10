@@ -68,6 +68,9 @@
   .dash .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .dash .row2.grow{flex:1;min-height:0}
   .dash .row2.fix{flex:0 0 auto}
+  .cov{flex-shrink:0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dim);letter-spacing:.01em}
+  .cov b{color:var(--mid);font-weight:600}
+  .cov .gap{color:var(--alert)}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0}
   .panel>.h{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--soft);flex-shrink:0}
   .panel>.h .micro{color:var(--mid)}
@@ -223,6 +226,7 @@
       <input type="month" id="rangeFrom" style="width:112px;display:none" title="Von">
       <span id="rangeSep" class="micro" style="display:none">–</span>
       <input type="month" id="rangeTo" style="width:112px;display:none" title="Bis">
+      <button class="bare sm" id="rangeSameMonth" style="display:none" title="Bis-Monat auf den Von-Monat setzen — für einen einzelnen Monat">= 1 Monat</button>
       <button class="accent" id="bImport">Auszug laden</button>
     </div>
   </header>
@@ -237,6 +241,7 @@
   <main>
     <section class="view on" id="v-dash">
       <div class="dash">
+        <div class="cov" id="coverage"></div>
         <div class="panel verlauf-panel">
           <div class="h"><span class="micro">Verlauf</span><span class="micro r"><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--in)"></i> ein &nbsp; <i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--out)"></i> aus</span></div>
           <div class="b"><div class="months" id="months"></div></div>
@@ -967,8 +972,10 @@ function txIn(months){
   return S.tx.filter(t=>!t.ign&&set.has(t.date.slice(0,7))&&inScope(t));
 }
 function agg(list,months){
-  const n=Math.max(months.length,1);
   const flow=list.filter(inFlow);
+  // Ø-Nenner: nur Monate mit echten Einnahmen/Ausgaben zählen, sonst verwässern
+  // leere Monate oder reine Rücklagen-Umbuchungen (kein "inFlow") den Durchschnitt.
+  const n=Math.max(new Set(flow.map(t=>t.date.slice(0,7))).size,1);
   const inc=flow.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0);
   const exp=flow.filter(t=>t.amt<0).reduce((s,t)=>s+Math.abs(t.amt),0);
   const sav=list.filter(isSaving).reduce((s,t)=>s+t.amt,0);
@@ -993,7 +1000,7 @@ function agg(list,months){
 /* ============ Rendering ============ */
 function render(){
   linkTransfers();derivePots();
-  renderScope();renderKpis();renderCats();renderCatsIn();renderGoals();renderMovers();renderMonths();
+  renderScope();renderKpis();renderCats();renderCatsIn();renderGoals();renderMovers();renderMonths();renderCoverage();
   renderTable();renderPots();renderAssign();renderFc();renderCatEd();
   const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
   const b=document.getElementById('bOpen');b.textContent=o;b.classList.toggle('zero',!o);
@@ -1131,6 +1138,33 @@ function renderMonths(){
   box.innerHTML=d.map(x=>`<div class="mc" title="${mLabel(x.m)} · ein ${eur(x.inc)} / aus ${eur(x.exp)}">
     <div class="mp"><div class="mb i" style="height:${(x.inc/max*100).toFixed(1)}%"></div><div class="mb o" style="height:${(x.exp/max*100).toFixed(1)}%"></div></div>
     <div class="ml">${MON[+x.m.split('-')[1]-1]}</div></div>`).join('');
+}
+// Zusammenhängende Monats-Blöcke mit mindestens einer Buchung je Konto — Näherung
+// für "Auszug vorhanden", da wir nur Buchungen kennen, keine Auszugszeiträume selbst.
+// Ein Monat ganz ohne Aktivität auf einem sonst regelmäßig bebuchten Konto sieht
+// dadurch wie eine Lücke aus, auch wenn der Auszug dafür eigentlich vorliegt.
+function accountCoverage(accId){
+  const months=[...new Set(S.tx.filter(t=>t.acc===accId).map(t=>t.date.slice(0,7)))].sort();
+  if(!months.length)return null;
+  const runs=[];let start=months[0],prev=months[0];
+  for(let i=1;i<months.length;i++){
+    if(addM(prev,1)!==months[i]){runs.push([start,prev]);start=months[i]}
+    prev=months[i];
+  }
+  runs.push([start,prev]);
+  return runs;
+}
+function renderCoverage(){
+  const box=document.getElementById('coverage');
+  if(!box)return;
+  if(!S.tx.length){box.innerHTML='';return}
+  box.innerHTML=ACCOUNTS.map(a=>{
+    const runs=accountCoverage(a.id);
+    if(!runs)return`<b>${esc(a.name)}</b>: keine Daten`;
+    const parts=runs.map(([s,e])=>s===e?mLabel(s):`${mLabel(s)}–${mLabel(e)}`);
+    const txt=runs.length===1?`${parts[0]} durchgängig`:parts.join(' <span class="gap">· Lücke ·</span> ');
+    return`<b>${esc(a.name)}</b>: ${txt}`;
+  }).join('  ·  ');
 }
 function catOpts(t){
   let o='<option value="">– offen –</option>';
@@ -1767,15 +1801,21 @@ document.getElementById('fcAuto').onclick=()=>{
 };
 document.getElementById('rangePreset').onchange=e=>{
   const custom=e.target.value==='custom';
-  ['rangeFrom','rangeSep','rangeTo'].forEach(id=>document.getElementById(id).style.display=custom?'':'none');
+  ['rangeFrom','rangeSep','rangeTo','rangeSameMonth'].forEach(id=>document.getElementById(id).style.display=custom?'':'none');
   if(custom){
+    // Default: letzte 12 Monate der tatsächlichen Abdeckung, nicht die volle Spanne —
+    // eine einzelne alte Buchung (z.B. auf dem Rücklagenkonto) soll nicht ungefragt
+    // Monate ganz ohne Daten mit in den Zeitraum reißen.
     const from=document.getElementById('rangeFrom'),to=document.getElementById('rangeTo'),all=monthsAll();
-    if(all.length){from.value=from.value||all[0];to.value=to.value||all[all.length-1]}
+    if(all.length){from.value=from.value||all[Math.max(0,all.length-12)];to.value=to.value||all[all.length-1]}
   }
   render();
 };
 document.getElementById('rangeFrom').onchange=render;
 document.getElementById('rangeTo').onchange=render;
+document.getElementById('rangeSameMonth').onclick=()=>{
+  document.getElementById('rangeTo').value=document.getElementById('rangeFrom').value;render();
+};
 document.getElementById('scope').onchange=render;
 document.getElementById('fCat').onchange=renderTable;
 document.getElementById('fType').onchange=renderTable;
