@@ -62,10 +62,15 @@ Girokonto merkt davon nichts.
 Name, Adresse, IBAN dürfen nie im Quelltext stehen. Der Maßstab: Die Datei muss
 bedenkenlos öffentlich hostbar sein.
 
+## Setup & Workflow
+- Lokal: `~/Projects/kontobuch`, eigenes Git-Repo, ein Repo pro Tool (nicht mit anderen Projekten vermischen).
+- Entwicklung über Claude Code Desktop, nicht mehr claude.ai-Chat — diese Datei wird automatisch als Kontext geladen.
+- Hosting: GitHub Pages (Repo public, `index.html` im Root). Kostenlos, ein Push aktualisiert die gehostete Version automatisch.
+- Bei jeder Änderung: `node --check` vor dem Ausliefern, bei echten Auszügen mit Playwright/DOM verifizieren (siehe Teststrategie oben), nie nur mit Fantasiedaten testen.
+
 ## Offene Punkte (Stand zuletzt)
 - Mannschaftskasse: fest oder flexibel? Noch nicht geklärt.
 - ASI Servicegebühr: Fälligkeitsmonat unbekannt (~47–48 €, „irgendwann im Frühjahr").
 - TBO: Mail an den Verein raus, Antwort steht aus.
 - Müll-Topf `ACC_STMT_MTH_DT_LLB…` (Randtext-Artefakt) muss einmalig manuell gelöscht werden — der Regex-Fix verhindert nur die Neuanlage.
-- Hosting noch nicht final entschieden (Cloudflare Pages vorgeschlagen, Direct Upload ohne Git).
 - Mobile Nutzung: kein Sync zwischen Geräten, nur JSON-Sicherung als Workaround.
