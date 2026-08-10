@@ -369,6 +369,14 @@
             <input id="meAddr" placeholder="Straße, PLZ Ort" style="width:230px">
             <span class="micro" style="flex:1;min-width:180px">Nur lokal gespeichert. Verhindert, dass du selbst als Empfänger im Verwendungszweck auftauchst.</span>
           </div>
+          <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--soft)">
+            <span class="micro">Google Drive</span>
+            <input id="driveClientId" placeholder="OAuth-Client-ID (…apps.googleusercontent.com)" style="width:340px">
+            <button id="bDriveFolder"><span id="bDriveFolderLbl">Ordner wählen</span></button>
+            <button class="bare" id="bDriveDisconnect" style="display:none">Trennen</button>
+            <button class="sm" id="bDriveSync" style="display:none">Jetzt synchronisieren</button>
+            <span class="micro" id="driveStatus" style="flex:1;min-width:180px"></span>
+          </div>
           <div id="catB"></div>
         </div>
       </div>
@@ -475,7 +483,8 @@ const CATS=[
    {id:'sonstige',name:'Sonstige Einnahmen',goal:'need',kw:['KINDERGELD']}]},
 ];
 
-let S={me:{name:'',addr:''},hidden:[],fc:{start:0,from:null,base:0,events:[]},tx:[],cats:JSON.parse(JSON.stringify(CATS)),learn:{},pots:[],open:{},bal:{},goals:{need:50,want:30,save:20}};
+let S={me:{name:'',addr:''},hidden:[],fc:{start:0,from:null,base:0,events:[]},tx:[],cats:JSON.parse(JSON.stringify(CATS)),learn:{},pots:[],open:{},bal:{},goals:{need:50,want:30,save:20},
+  drive:{clientId:'',folderId:'',folderName:'',imported:{}}};
 
 /* ============ Speicher ============ */
 const store=(()=>{
@@ -499,6 +508,7 @@ async function load(){
     if(p.me)S.me=p.me;
     if(Array.isArray(p.hidden))S.hidden=p.hidden;
     if(p.fc)S.fc=Object.assign({start:0,from:null,base:0,events:[]},p.fc);
+    if(p.drive)S.drive=Object.assign({clientId:'',folderId:'',folderName:'',imported:{}},p.drive);
   }catch(e){}
 }
 let sT=null;
@@ -1359,6 +1369,7 @@ function renderCatEd(){
   const mn=document.getElementById('meName'),ma=document.getElementById('meAddr');
   if(document.activeElement!==mn)mn.value=S.me.name||'';
   if(document.activeElement!==ma)ma.value=S.me.addr||'';
+  renderDriveUI();
   document.getElementById('catB').innerHTML=S.cats.map(c=>`
     <div class="ce"><div class="ceh">
       <span class="sw" style="background:${c.color}"></span>
@@ -1545,6 +1556,144 @@ document.getElementById('bPaste').onclick=()=>{
   stat(`${add} übernommen (${f})${skip?`, ${skip} Duplikate`:''}`,'ok');
 };
 
+/* ============ Google Drive ============ */
+// Alles clientseitig, kein eigener Server. Scope bewusst drive.file statt drive.readonly:
+// die App bekommt über den Picker nur Zugriff auf den einen gewählten Ordner, nie den ganzen Drive.
+// Client-ID, Ordner-ID und die Liste bereits importierter Datei-IDs bleiben ausschließlich lokal (S.drive).
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+let driveTokenClient=null;
+function renderDriveUI(){
+  const ci=document.getElementById('driveClientId');
+  if(document.activeElement!==ci)ci.value=S.drive.clientId||'';
+  const connected=!!S.drive.folderId;
+  document.getElementById('bDriveFolderLbl').textContent=connected?'Ordner wechseln':'Ordner wählen';
+  document.getElementById('bDriveDisconnect').style.display=connected?'':'none';
+  document.getElementById('bDriveSync').style.display=connected?'':'none';
+  const st=document.getElementById('driveStatus');
+  if(!st.dataset.busy)st.textContent=connected?`Verbunden: ${S.drive.folderName}`:'';
+}
+function driveSetStatus(msg,busy){
+  const st=document.getElementById('driveStatus');st.textContent=msg;st.dataset.busy=busy?'1':'';
+}
+function driveLoadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Skript konnte nicht geladen werden — Internet nötig'));
+    document.head.appendChild(s);
+  });
+}
+async function driveEnsureGis(){
+  if(!(window.google&&google.accounts&&google.accounts.oauth2))await driveLoadScript('https://accounts.google.com/gsi/client');
+}
+async function driveEnsurePicker(){
+  if(!(window.gapi&&google.picker)){
+    if(!window.gapi)await driveLoadScript('https://apis.google.com/js/api.js');
+    await new Promise(res=>gapi.load('picker',res));
+  }
+}
+function driveTokenClientFor(clientId){
+  if(driveTokenClient&&driveTokenClient._cid===clientId)return driveTokenClient;
+  driveTokenClient=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:DRIVE_SCOPE,callback:()=>{}});
+  driveTokenClient._cid=clientId;
+  return driveTokenClient;
+}
+function driveGetToken(prompt){
+  return new Promise(async(resolve,reject)=>{
+    if(!S.drive.clientId){reject(new Error('Keine Client-ID hinterlegt'));return}
+    try{await driveEnsureGis()}catch(e){reject(e);return}
+    const tc=driveTokenClientFor(S.drive.clientId);
+    tc.callback=resp=>{if(resp.error)reject(new Error(resp.error));else resolve(resp.access_token)};
+    tc.requestAccessToken({prompt});
+  });
+}
+async function driveConnect(){
+  const cid=document.getElementById('driveClientId').value.trim();
+  if(!cid){toast('Erst Client-ID eintragen');return}
+  S.drive.clientId=cid;save();
+  try{
+    driveSetStatus('Google-Anmeldung …',true);
+    const token=await driveGetToken('consent');
+    driveSetStatus('Ordner wählen …',true);
+    await driveEnsurePicker();
+    const view=new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      .setSelectFolderEnabled(true).setIncludeFolders(true).setMode(google.picker.DocsViewMode.LIST);
+    const picker=new google.picker.PickerBuilder().addView(view).setOAuthToken(token)
+      .setCallback(async data=>{
+        if(data.action===google.picker.Action.PICKED){
+          const f=data.docs[0];
+          S.drive.folderId=f.id;S.drive.folderName=f.name;S.drive.imported=S.drive.imported||{};
+          save();renderDriveUI();
+          await driveRunSync(token);
+        }else if(data.action===google.picker.Action.CANCEL){
+          driveSetStatus('',false);renderDriveUI();
+        }
+      }).build();
+    picker.setVisible(true);
+  }catch(err){driveSetStatus('',false);toast('Google-Verbindung fehlgeschlagen: '+err.message)}
+}
+function driveDisconnect(){
+  S.drive.folderId='';S.drive.folderName='';S.drive.imported={};save();renderDriveUI();toast('Drive-Ordner getrennt');
+}
+async function driveListFolder(folderId,token){
+  let files=[],pageToken=null;
+  do{
+    const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+    const url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=200${pageToken?'&pageToken='+pageToken:''}`;
+    const r=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+    if(!r.ok)throw new Error('Drive-Liste fehlgeschlagen ('+r.status+')');
+    const j=await r.json();
+    files=files.concat(j.files||[]);pageToken=j.nextPageToken;
+  }while(pageToken);
+  return files;
+}
+async function driveWalk(folderId,token){
+  const entries=await driveListFolder(folderId,token);
+  let out=[];
+  for(const e of entries){
+    if(e.mimeType==='application/vnd.google-apps.folder')out=out.concat(await driveWalk(e.id,token));
+    else if(e.mimeType==='application/pdf'||/\.csv$/i.test(e.name))out.push(e);
+  }
+  return out;
+}
+async function driveDownload(fileId,token){
+  const r=await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,{headers:{Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Download fehlgeschlagen ('+r.status+')');
+  return await r.blob();
+}
+async function driveRunSync(token){
+  try{
+    driveSetStatus('Drive wird geprüft …',true);
+    const entries=await driveWalk(S.drive.folderId,token);
+    S.drive.imported=S.drive.imported||{};
+    const neu=entries.filter(e=>!S.drive.imported[e.id]);
+    if(!neu.length){driveSetStatus('Verbunden: '+S.drive.folderName+' — keine neuen Dateien',false);renderDriveUI();return}
+    driveSetStatus(`Lade ${neu.length} Datei(en) aus Drive …`,true);
+    const files=[];
+    for(const e of neu)files.push(new File([await driveDownload(e.id,token)],e.name,{type:e.mimeType}));
+    await handleFiles(files);
+    neu.forEach(e=>S.drive.imported[e.id]=true);
+    save();
+  }catch(err){toast('Drive-Sync-Fehler: '+err.message)}
+  finally{driveSetStatus('',false);renderDriveUI()}
+}
+async function driveManualSync(){
+  if(!S.drive.folderId){toast('Erst einen Ordner verbinden');return}
+  try{
+    driveSetStatus('Google-Anmeldung …',true);
+    const token=await driveGetToken('');
+    await driveRunSync(token);
+  }catch(err){driveSetStatus('',false);toast('Google-Anmeldung nötig — bitte erneut versuchen')}
+}
+// Beim Start: nur ein stiller Versuch, ohne Anmelde-Fenster. Klappt das nicht (z.B. weil der
+// Browser das Popup blockt), bleibt einfach der manuelle „Jetzt synchronisieren“-Button übrig.
+async function driveAutoSync(){
+  if(!S.drive.clientId||!S.drive.folderId)return;
+  try{const token=await driveGetToken('');await driveRunSync(token)}catch(err){/* still, kein Autopop-up erzwingen */}
+}
+document.getElementById('bDriveFolder').onclick=driveConnect;
+document.getElementById('bDriveDisconnect').onclick=driveDisconnect;
+document.getElementById('bDriveSync').onclick=driveManualSync;
+document.getElementById('driveClientId').onchange=e=>{S.drive.clientId=e.target.value.trim();save()};
+
 /* ============ Sonstiges ============ */
 document.getElementById('bAdd').onclick=()=>{
   const d=prompt('Datum (TT.MM.JJJJ)');if(!d)return;
@@ -1639,6 +1788,7 @@ if(PDF_OK){try{pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.
   render();
   if(!PDF_OK){drop.style.display='none';document.getElementById('pdfWarn').style.display='block'}
   if(!S.tx.length)veil.classList.add('on');
+  driveAutoSync();
 })();
 </script>
 </body>
