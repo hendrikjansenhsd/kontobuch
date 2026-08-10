@@ -840,6 +840,18 @@ function guessGroup(name,rate){
   return rate>0?'fix':'';
 }
 const POT_SKIP=/^(Periode\s|Abschluss|Gutschrift$|Zahlung\s|Überweisung|Ueberweisung|E-Banking|Buchung$)|^[A-Z]{2,}(_[A-Z]{2,})+/i;
+// Bekannte Jahres-/Halbjahresrechnungen mit ihren Fälligkeitsmonaten — einmal genannt,
+// wird beim nächsten Laden automatisch auf noch nicht manuell konfigurierte Töpfe
+// angewendet, ohne dass die Monate im UI angeklickt werden müssen. amount, wenn bekannt;
+// sonst wird der Jahresbetrag aus der erkannten monatlichen Rate hergeleitet.
+const POT_DEFAULTS=[
+  {test:/BAHNCARD/,months:[8]},
+  {test:/^ADAC$/,months:[8]},
+  {test:/TBOMITGLIED/,months:[1,7]},
+  {test:/BAYER0?4MITGLIED/,months:[1]},
+  {test:/GOOGLEONE/,months:[10]},
+  {test:/SCALABLECAPITAL/,months:[1],amount:143.78},
+];
 function derivePots(){
   const found={};
   for(const t of S.tx){
@@ -871,6 +883,14 @@ function derivePots(){
               group:guessGroup(f.name,f.rate)};S.pots.push(p)}
     else if(!p.manual){p.name=f.name;p.rate=f.rate}
     p.inSum=f.inSum;p.n=f.n;p.last=f.last;p.prev=f.prev;
+    if(!p.manual&&(!p.months||!p.months.length)){
+      const def=POT_DEFAULTS.find(d=>d.test.test(squash(p.name)));
+      if(def){
+        p.months=def.months;
+        p.amount=def.amount!==undefined?def.amount:(p.rate?Math.round(p.rate*12/def.months.length*100)/100:null);
+        p.group='fix';
+      }
+    }
   }
   for(const p of S.pots){if(p.inSum===undefined){p.inSum=0;p.n=0;p.last=''}}
 }
@@ -1382,8 +1402,9 @@ function potHint(p){
 }
 
 function potSet(id,f,v){const p=S.pots.find(p=>p.id===id);if(!p)return;
-  p[f]=v===''?null:(['until','baseYM'].includes(f)?v:parseFloat(v)); 
+  p[f]=v===''?null:(['until','baseYM'].includes(f)?v:parseFloat(v));
   if(f==='baseAmt'&&v==='')p.baseAmt=null;
+  if(f==='amount')p.amountManual=true;
   p.manual=true;save();renderPots();renderKpis()}
 function potDel(id){
   const p=S.pots.find(p=>p.id===id);if(!p)return;
@@ -1395,7 +1416,13 @@ function potMonth(id,m){
   const p=S.pots.find(p=>p.id===id);if(!p)return;
   const ms=Array.isArray(p.months)?[...p.months]:[];
   const i=ms.indexOf(m); if(i>=0)ms.splice(i,1); else ms.push(m);
-  p.months=ms.sort((a,b)=>a-b);p.manual=true;save();renderPots();
+  p.months=ms.sort((a,b)=>a-b);p.manual=true;
+  // Jahresbetrag aus der schon erkannten monatlichen Rate ableiten (derivePots hat sie
+  // aus der echten Zahlungshistorie berechnet) und bei jeder Monatsänderung neu rechnen,
+  // solange der Nutzer den Betrag noch nicht selbst eingetippt hat (amountManual) — sonst
+  // würde der erste angeklickte Monat bei mehreren Fälligkeiten den Betrag einfrieren.
+  if(!p.amountManual&&p.rate&&p.months.length)p.amount=Math.round(p.rate*12/p.months.length*100)/100;
+  save();renderPots();
 }
 function potGroup(id,g){const p=S.pots.find(p=>p.id===id);if(p){p.group=g;p.manual=true;save();renderPots()}}
 
