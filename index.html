@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kontobuch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --bg:#0F1117; --panel:#171A23; --hi:#1E222D; --line:#292E3B; --soft:#212635;
+    --txt:#E7EAF2; --mid:#A3ABBA; --dim:#6C7484;
+    --in:#3FBFB0; --out:#E0A458; --alert:#E0647A;
+    --need:#5B8FD4; --want:#C89BD8; --save:#4FB88A;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--txt);font:13px/1.45 'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+  .mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+  .micro{font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;color:var(--dim)}
+  ::selection{background:rgba(63,191,176,.28)}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#2E3444;border-radius:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  button{font:inherit;font-size:12px;color:var(--txt);background:var(--hi);border:1px solid var(--line);border-radius:5px;padding:6px 11px;cursor:pointer;transition:background .13s,border-color .13s}
+  button:hover{background:#252B38;border-color:#3A4152}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--in);outline-offset:1px}
+  button.accent{background:var(--in);border-color:var(--in);color:#0B1412;font-weight:600}
+  button.accent:hover{background:#4ACFC0}
+  button.bare{background:transparent;border-color:transparent;color:var(--dim);padding:4px 7px}
+  button.bare:hover{color:var(--alert)}
+  button.sm{padding:3px 8px;font-size:11px}
+  select,input{font:inherit;font-size:12px;color:var(--txt);background:var(--hi);border:1px solid var(--line);border-radius:5px;padding:6px 9px}
+  select{cursor:pointer}
+  input[type=file]{display:none}
+  table{width:100%;border-collapse:collapse}
+
+  .app{display:flex;flex-direction:column;height:100vh;padding:12px 16px 10px;gap:10px}
+  header.bar{display:flex;align-items:center;gap:16px;flex-shrink:0}
+  .wm{font-family:'Fraunces',serif;font-weight:600;font-size:20px;white-space:nowrap}
+  .wm span{color:var(--in)}
+  nav{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:3px}
+  nav button{background:transparent;border:none;padding:5px 12px;border-radius:5px;color:var(--mid);font-weight:500}
+  nav button:hover{background:var(--hi);color:var(--txt)}
+  nav button.on{background:var(--hi);color:var(--txt);box-shadow:inset 0 0 0 1px var(--line)}
+  .badge{margin-left:6px;background:var(--out);color:#20160A;border-radius:9px;padding:0 6px;font-size:10px;font-weight:600;font-family:'IBM Plex Mono',monospace}
+  .badge.zero{display:none}
+  .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  #stat{font-size:11px;color:var(--dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #stat.err{color:var(--alert)} #stat.ok{color:var(--in)}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;flex-shrink:0}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 12px;min-width:0}
+  .kpi .v{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-size:18px;font-weight:600;letter-spacing:-.02em;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi .d{font-family:'IBM Plex Mono',monospace;font-size:10px;margin-top:2px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi.i .v{color:var(--in)} .kpi.o .v{color:var(--out)}
+  .up{color:var(--alert)} .dn{color:var(--in)}
+
+  main{flex:1;min-height:0}
+  .view{display:none;height:100%;min-height:0}
+  .view.on{display:block}
+  .g2{display:grid;grid-template-columns:1.4fr 1fr;gap:10px;height:100%;min-height:0}
+  .col{display:flex;flex-direction:column;gap:10px;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0}
+  .panel>.h{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--soft);flex-shrink:0}
+  .panel>.h .micro{color:var(--mid)}
+  .panel>.h .r{margin-left:auto}
+  .panel>.b{padding:10px 12px;overflow-y:auto;flex:1;min-height:0}
+  .panel.fix>.b{overflow:visible;flex:none}
+  .empty{display:flex;align-items:center;justify-content:center;height:100%;min-height:80px;color:var(--dim);font-size:12.5px;text-align:center;padding:20px}
+
+  /* Kategorie-Aufklappliste */
+  .cg{border-bottom:1px solid var(--soft)}
+  .cg:last-child{border-bottom:none}
+  .ch{display:grid;grid-template-columns:1fr auto;gap:1px 10px;padding:6px 0;cursor:pointer;align-items:center}
+  .ch:hover .nm{color:#fff}
+  .nm{display:flex;align-items:center;gap:7px;font-size:12.5px;min-width:0}
+  .nm em{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .caret{width:9px;color:var(--dim);flex-shrink:0;transition:transform .15s;display:inline-block}
+  .cg.open .caret{transform:rotate(90deg)}
+  .dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+  .nums{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-size:12px;text-align:right;white-space:nowrap}
+  .nums .p{color:var(--dim);font-size:10.5px;margin-left:6px}
+  .trk{grid-column:1/-1;height:4px;background:var(--hi);border-radius:2px;overflow:hidden;margin-top:2px}
+  .fill{height:100%;border-radius:2px}
+  .sub{display:none;padding:2px 0 8px 16px}
+  .cg.open .sub{display:block}
+  .sr{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11.5px;color:var(--mid);cursor:pointer}
+  .sr:hover{color:var(--txt)}
+  .sr .sn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sr .sv{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .sr .gl{font-size:9px;padding:1px 5px;border-radius:3px;font-family:'IBM Plex Mono',monospace}
+  .gl.need{background:rgba(91,143,212,.16);color:var(--need)}
+  .gl.want{background:rgba(200,155,216,.16);color:var(--want)}
+  .gl.save{background:rgba(79,184,138,.16);color:var(--save)}
+  .txl{display:none;padding:3px 0 6px 14px;border-left:1px solid var(--soft);margin-left:2px}
+  .sr.open + .txl{display:block}
+  .tl{display:flex;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dim);padding:2px 0}
+  .tl .td{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* 50/30/20 */
+  .goal{margin-bottom:11px}
+  .goal:last-child{margin-bottom:0}
+  .gtop{display:flex;align-items:baseline;gap:8px;font-size:12px;margin-bottom:3px}
+  .gtop b{font-family:'IBM Plex Mono',monospace;margin-left:auto;font-size:12px}
+  .gtop small{color:var(--dim);font-family:'IBM Plex Mono',monospace;font-size:10px}
+  .gbar{height:9px;background:var(--hi);border-radius:5px;position:relative;overflow:hidden}
+  .gbar i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;transition:width .3s}
+  .gmark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--txt);opacity:.55}
+
+  /* Töpfe */
+  .pot{padding:7px 0;border-bottom:1px solid var(--soft)}
+  .pot:last-child{border-bottom:none}
+  .ptop{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
+  .ptop .pv{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ptop small{color:var(--dim);font-family:'IBM Plex Mono',monospace;font-size:10px}
+  .pbar{height:4px;background:var(--hi);border-radius:2px;margin-top:4px;overflow:hidden}
+  .pbar i{display:block;height:100%;background:var(--save);border-radius:2px}
+  .pform{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:6px}
+  .pform label{display:flex;gap:4px;align-items:center}
+  .pform input{width:78px;padding:3px 6px;font-size:11px}
+  .pform select{font-size:11px;padding:3px 5px}
+  .mrow{display:flex;gap:1px}
+  .mtog{padding:2px 0;width:17px;font-size:9.5px;font-family:'IBM Plex Mono',monospace;border-radius:3px;
+        background:transparent;border:1px solid var(--line);color:var(--dim);line-height:1.4}
+  .mtog.on{background:rgba(63,191,176,.18);border-color:var(--in);color:var(--in);font-weight:600}
+
+  /* Verlauf */
+  .months{display:flex;align-items:stretch;gap:8px;height:100%;min-height:130px}
+  .mc{flex:1;display:flex;flex-direction:column;min-width:0}
+  .mp{flex:1;display:flex;align-items:flex-end;justify-content:center;gap:3px;min-height:0}
+  .mb{width:13px;border-radius:2px 2px 0 0;min-height:2px}
+  .mb.i{background:var(--in)} .mb.o{background:var(--out)}
+  .ml{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--dim);text-align:center;padding-top:5px;white-space:nowrap}
+
+  /* Tabelle */
+  thead th{position:sticky;top:0;background:var(--panel);z-index:2;text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);color:var(--dim);font-weight:600;font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.08em;font-size:9.5px}
+  tbody td{padding:5px 9px;border-bottom:1px solid var(--soft);vertical-align:middle}
+  tbody tr:hover{background:var(--hi)}
+  td.dt{font-family:'IBM Plex Mono',monospace;color:var(--mid);white-space:nowrap;font-size:11.5px}
+  td.am{text-align:right;font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
+  td.am.p{color:var(--in)} td.am.n{color:var(--out)}
+  td.ds{max-width:1px;width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+  td.ds small{color:var(--dim)}
+  tr.mut td{opacity:.42}
+  select.pick{padding:3px 6px;font-size:11.5px;width:100%;max-width:190px}
+  .tag{border-radius:4px;padding:2px 6px;font-size:9.5px;font-family:'IBM Plex Mono',monospace;letter-spacing:.04em;background:transparent;border:1px solid var(--line);color:var(--dim);cursor:pointer}
+  .tag.on{background:rgba(63,191,176,.16);border-color:var(--in);color:var(--in)}
+  .tag.tr{background:rgba(108,116,132,.18);border-color:var(--dim);color:var(--mid);cursor:default}
+  .acc{font-size:9.5px;font-family:'IBM Plex Mono',monospace;padding:1px 5px;border-radius:3px;background:var(--hi);color:var(--dim)}
+  .tb{display:flex;gap:7px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--soft);flex-shrink:0;flex-wrap:wrap}
+  .tb .ct{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)}
+
+  /* Zuordnen */
+  .as{border:1px solid var(--line);border-radius:7px;padding:9px 11px;margin-bottom:8px;background:var(--hi)}
+  .as .t{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}
+  .as .m{font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .as .mt{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dim);margin-left:auto;white-space:nowrap}
+  .as .ex{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim);margin-bottom:7px}
+  .chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{font-size:11px;padding:3px 9px;border-radius:20px}
+
+  /* Kategorien-Editor */
+  .ce{border:1px solid var(--line);border-radius:7px;margin-bottom:8px;overflow:hidden}
+  .ceh{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--hi)}
+  .ceh .sw{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+  .ceh input{background:transparent;border:1px solid transparent;font-weight:600;width:180px}
+  .ceh input:hover{border-color:var(--line)}
+  .ceb{padding:6px 10px}
+  .ser{display:flex;align-items:center;gap:7px;padding:3px 0}
+  .ser input.sn{flex:0 0 160px;font-size:11.5px;padding:4px 7px}
+  .ser input.kw{flex:1;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 7px;min-width:0}
+  .ser select{font-size:11px;padding:4px 6px}
+
+  .drop{border:1.5px dashed var(--line);border-radius:8px;padding:24px;text-align:center;color:var(--mid);cursor:pointer;transition:border-color .15s,background .15s}
+  .drop:hover,.drop.over{border-color:var(--in);background:rgba(63,191,176,.05)}
+  textarea{width:100%;min-height:80px;resize:vertical;background:var(--hi);border:1px solid var(--line);border-radius:6px;color:var(--txt);padding:8px 10px;font-family:'IBM Plex Mono',monospace;font-size:11.5px}
+  .veil{position:fixed;inset:0;background:rgba(6,7,10,.75);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
+  .veil.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;width:min(640px,100%);max-height:86vh;overflow-y:auto;padding:17px}
+  .modal h2{font-family:'Fraunces',serif;font-size:16px;margin:0 0 3px;font-weight:600}
+  .modal p.s{color:var(--dim);font-size:11.5px;margin:0 0 13px}
+  .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--hi);border:1px solid var(--line);padding:9px 15px;border-radius:7px;font-size:12px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:80;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .note{background:var(--hi);border:1px solid var(--line);border-radius:6px;padding:9px 11px;font-size:11.5px;color:var(--mid);margin-top:10px}
+
+  @media (max-width:1200px){
+    .kpis{grid-template-columns:repeat(2,1fr)} .g2{grid-template-columns:1fr}
+    body{overflow:auto} .app{height:auto;min-height:100vh} .view.on{height:auto}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="wm">Konto<span>buch</span></div>
+    <nav id="nav">
+      <button data-v="dash" class="on">Dashboard</button>
+      <button data-v="tx">Buchungen</button>
+      <button data-v="pots">Rücklagen</button>
+      <button data-v="assign">Zuordnen<span class="badge zero" id="bOpen">0</span></button>
+      <button data-v="fc">Forecast</button>
+      <button data-v="cats">Kategorien</button>
+    </nav>
+    <div class="right">
+      <span id="stat"></span>
+      <select id="scope" title="Welche Konten"></select>
+      <select id="range" title="Zeitraum">
+        <option value="3">3 Monate</option>
+        <option value="6">6 Monate</option>
+        <option value="12" selected>12 Monate</option>
+        <option value="0">Alles</option>
+      </select>
+      <button class="accent" id="bImport">Auszug laden</button>
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi i"><div class="micro">Ø Einnahmen / Monat</div><div class="v" id="kIn">–</div><div class="d" id="kInD"></div></div>
+    <div class="kpi o"><div class="micro">Ø Ausgaben / Monat</div><div class="v" id="kOut">–</div><div class="d" id="kOutD"></div></div>
+    <div class="kpi"><div class="micro">Ø Saldo / Monat</div><div class="v" id="kBal">–</div><div class="d" id="kBalD"></div></div>
+    <div class="kpi"><div class="micro">Rücklagen gesamt</div><div class="v" id="kPot">–</div><div class="d" id="kPotD"></div></div>
+  </div>
+
+  <main>
+    <section class="view on" id="v-dash">
+      <div class="g2">
+        <div class="panel">
+          <div class="h"><span class="micro">Ausgaben nach Kategorie</span><span class="micro r" id="cHint"></span></div>
+          <div class="b" id="cats"></div>
+        </div>
+        <div class="col">
+          <div class="panel fix">
+            <div class="h"><span class="micro">Zielerreichung</span><span class="micro r" id="gHint"></span></div>
+            <div class="b" id="goals"></div>
+          </div>
+          <div class="panel fix">
+            <div class="h"><span class="micro">Stärkste Veränderungen</span><span class="micro r" id="mHint"></span></div>
+            <div class="b" id="movers"></div>
+          </div>
+          <div class="panel">
+            <div class="h"><span class="micro">Verlauf</span><span class="micro r"><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--in)"></i> ein &nbsp; <i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--out)"></i> aus</span></div>
+            <div class="b"><div class="months" id="months"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-tx">
+      <div class="panel" style="height:100%">
+        <div class="tb">
+          <select id="fCat"><option value="">Alle Kategorien</option></select>
+          <select id="fType">
+            <option value="">Alle</option><option value="out">Ausgaben</option><option value="in">Einnahmen</option>
+            <option value="none">Ohne Kategorie</option><option value="tr">Umbuchungen</option><option value="biz">Verauslagt</option>
+          </select>
+          <button id="bAdd">+ Buchung</button><button id="bCsv">CSV</button>
+          <span class="ct" id="txCt"></span>
+        </div>
+        <div class="b" style="padding:0">
+          <table><thead><tr>
+            <th style="width:74px">Datum</th><th>Beschreibung</th><th style="width:64px">Konto</th>
+            <th style="width:200px">Kategorie</th><th style="width:96px;text-align:right">Betrag</th><th style="width:86px"></th>
+          </tr></thead><tbody id="txB"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-pots">
+      <div class="g2">
+        <div class="panel">
+          <div class="h"><span class="micro">Töpfe auf dem Rücklagenkonto</span><span class="micro r" id="pHint"></span></div>
+          <div class="b" id="pots"></div>
+        </div>
+        <div class="col">
+          <div class="panel fix">
+            <div class="h"><span class="micro">Aufteilung willbe-Konto</span><span class="micro r" id="ringTot"></span></div>
+            <div class="b" id="ring"></div>
+          </div>
+          <div class="panel fix">
+            <div class="h"><span class="micro">Topf anlegen</span></div>
+            <div class="b">
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <input id="pName" placeholder="z.B. Notgroschen" style="flex:1;min-width:120px">
+                <input id="pTarget" type="number" placeholder="Ziel €" style="width:84px">
+                <input id="pUntil" type="month" style="width:120px" title="bis wann">
+                <button id="bPot">Anlegen</button>
+              </div>
+              <div class="note">Töpfe aus deinen Daueraufträgen erkennt das Tool selbst. Hier legst du zusätzliche an, die kein eigener Dauerauftrag sind — etwa Notgroschen oder Umzug. Den Startbestand trägst du unten am Topf ein.</div>
+            </div>
+          </div>
+          <div class="panel fix"><div class="h"><span class="micro">Nicht zugeordnet</span></div><div class="b" id="unal"></div></div>
+          <div class="panel"><div class="h"><span class="micro">Entnahmen zuordnen</span><span class="micro r">sonst bleiben Töpfe zu hoch</span></div><div class="b" id="outs"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-assign">
+      <div class="panel" style="height:100%">
+        <div class="h"><span class="micro">Offene Zuordnungen — nach Empfänger gruppiert</span><span class="micro r">Ein Klick ordnet alle Buchungen dieses Empfängers zu und merkt sich die Wahl</span></div>
+        <div class="b" id="asB"></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-fc">
+      <div class="g2">
+        <div class="panel">
+          <div class="h"><span class="micro">Kontostandsprognose</span><span class="micro r" id="fcHint"></span></div>
+          <div class="b" style="padding:0"><table><thead><tr>
+            <th style="width:70px">Monat</th><th style="text-align:right">Ein</th><th style="text-align:right">Aus</th>
+            <th style="text-align:right">Saldo</th><th style="text-align:right;width:96px">Kontostand</th><th>Anlass</th>
+          </tr></thead><tbody id="fcB"></tbody></table></div>
+        </div>
+        <div class="col">
+          <div class="panel fix"><div class="h"><span class="micro">Startwerte</span></div><div class="b">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <span class="micro">Kontostand Giro</span>
+              <input type="number" id="fcStart" step="0.01" style="width:100px;padding:4px 7px;font-size:11.5px">
+              <span class="micro">am</span>
+              <input type="month" id="fcFrom" style="width:118px;padding:4px 7px;font-size:11.5px">
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap">
+              <span class="micro">Ø sonstige Ausgaben/Mon.</span>
+              <input type="number" id="fcBase" step="0.01" style="width:100px;padding:4px 7px;font-size:11.5px">
+              <button class="sm" id="fcAuto">aus Historie</button>
+            </div>
+            <div class="note"><b>So funktioniert es:</b> Der Kontostand oben ist der Startpunkt. Für jeden der nächsten 12 Monate rechnet das Tool: Kontostand + geplante Einnahmen − geplante Ausgaben. Was dabei rauskommt, ist der Startwert des Folgemonats.<br><br>
+            Als Ausgabe fließen automatisch ein: deine Rücklagenraten (Summe aller Töpfe) und der Ø-Betrag rechts daneben für alles Übrige — Einkäufe, Tanken, Abos. Alles Planbare trägst du unten als Posten ein: Einnahmen positiv, Ausgaben mit Minus davor.<br><br>
+            Jahresrechnungen wie Google One gehören <b>nicht</b> hier rein — die bezahlst du aus dem Topf, das Girokonto merkt davon nichts.</div>
+          </div></div>
+          <div class="panel"><div class="h"><span class="micro">Geplante Posten</span>
+            <button class="bare sm r" id="fcAdd">+ Posten</button></div>
+            <div class="b" id="fcEv"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-cats">
+      <div class="panel" style="height:100%">
+        <div class="tb">
+          <input id="nCat" placeholder="Neue Hauptkategorie" style="width:190px"><button id="bCat">Hinzufügen</button>
+          <button id="bExp">Daten sichern</button><button id="bImp">Sicherung laden</button>
+          <input type="file" id="fJson" accept="application/json">
+          <button id="bForget">Gelerntes zurücksetzen</button>
+          <span class="ct" id="lCt"></span>
+        </div>
+        <div class="b">
+          <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+            <span class="micro">Eigene Angaben</span>
+            <input id="meName" placeholder="Dein Name (wie im Auszug)" style="width:210px">
+            <input id="meAddr" placeholder="Straße, PLZ Ort" style="width:230px">
+            <span class="micro" style="flex:1;min-width:180px">Nur lokal gespeichert. Verhindert, dass du selbst als Empfänger im Verwendungszweck auftauchst.</span>
+          </div>
+          <div id="catB"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="veil" id="veil"><div class="modal">
+  <h2>Kontoauszug laden</h2>
+  <p class="s">Volksbank, N26 und willbe werden automatisch erkannt. Alles bleibt in deinem Browser.</p>
+  <div class="drop" id="drop">
+    <input type="file" id="fPdf" accept="application/pdf,text/csv,.csv" multiple>
+    <div style="font-weight:500;color:var(--txt)">PDF oder CSV wählen &mdash; oder hierher ziehen</div>
+    <div style="font-size:11.5px;margin-top:3px">Mehrere gleichzeitig möglich · Duplikate werden übersprungen</div>
+  </div>
+  <div id="pdfWarn" style="display:none" class="note">Der PDF-Leser konnte nicht geladen werden — dafür braucht die Seite einmalig Internet. Ohne ihn funktioniert alles Weitere trotzdem: Auszug im PDF-Betrachter markieren, kopieren, unten einfügen.</div>
+  <div style="margin-top:13px">
+    <div class="micro" style="margin-bottom:5px">Alternativ Text einfügen</div>
+    <textarea id="paste" placeholder="Text aus dem PDF-Betrachter hier einfügen"></textarea>
+    <div style="display:flex;gap:7px;margin-top:8px;justify-content:flex-end">
+      <button id="bClose">Schließen</button><button class="accent" id="bPaste">Text auswerten</button>
+    </div>
+  </div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ Stammdaten ============ */
+const KEY='kontobuch.v3';
+const PAL=['#5B8FD4','#8B7BD8','#D4A84E','#5FB88A','#D4735E','#7FA3B8','#B08968','#4FB3A0','#C08AB0','#6E8AC4','#A8894E','#9B7FC4'];
+
+// Konten werden am IBAN erkannt. kind: privat | geschaeft | ruecklage
+const ACCOUNTS=[
+  {id:'vb',   name:'Volksbank', kind:'privat'},
+  {id:'n26',  name:'N26',       kind:'geschaeft'},
+  {id:'wb',   name:'willbe',    kind:'ruecklage'},
+];
+
+// goal: need | want | save  (Basis für 50/30/20)
+const CATS=[
+ {id:'leben',name:'Lebensmittel',color:'#5B8FD4',subs:[
+   {id:'supermarkt',name:'Supermarkt',goal:'need',kw:['REWE','EDEKA','ALDI SUED','ALDI NORD','LIDL','KAUFLAND','PENNY','NETTO','FOODCONCEPT','WEBER EINZELHANDEL']},
+   {id:'baecker',name:'Bäckerei',goal:'need',kw:['BAECKEREI','BÄCKEREI','BACKSTUBE']},
+   {id:'drogerie',name:'Drogerie',goal:'need',kw:['DM DROGERIE','ROSSMANN','MUELLER']}]},
+ {id:'essen',name:'Essen gehen',color:'#D4735E',subs:[
+   {id:'restaurant',name:'Restaurant',goal:'want',kw:['RESTAURANT','HANS IM GLUECK','BRAUHAUS']},
+   {id:'imbiss',name:'Imbiss',goal:'want',kw:['SUMUP','DONER','KEBAP','IMBISS','FRIET','MCDONALD','BURGER KING']},
+   {id:'cafe',name:'Café',goal:'want',kw:['STARBUCKS','CAFE','COFFEE']},
+   {id:'liefer',name:'Lieferdienst',goal:'want',kw:['LIEFERANDO','UBER EATS','WOLT']}]},
+ {id:'transport',name:'Transport',color:'#5FB88A',subs:[
+   {id:'tanken',name:'Tanken',goal:'need',kw:['TANKSTELLE','ARAL','SHELL','ESSO','STAR TANK','TOTAL']},
+   {id:'oepnv',name:'Bahn & ÖPNV',goal:'need',kw:['DB VERTRIEB','BAHNCARD','FLIXBUS','VRR','BVG','RUHRBAHN']},
+   {id:'auto',name:'Auto',goal:'need',kw:['ADAC','WERKSTATT','TUEV','KFZ']},
+   {id:'parken',name:'Parken',goal:'need',kw:['PARKHAUS','PARKEN','APCOA']}]},
+ {id:'wohnen',name:'Wohnen',color:'#8B7BD8',subs:[
+   {id:'miete',name:'Miete',goal:'need',kw:['MIETE','KALTMIETE']},
+   {id:'energie',name:'Energie',goal:'need',kw:['STADTWERKE','STROM','GAS','WASSER','ENERGIE']},
+   {id:'internet',name:'Internet & Telefon',goal:'need',kw:['VODAFONE','TELEKOM','O2 ','ALDI TALK','E-PLUS','1UND1']},
+   {id:'haushalt',name:'Haushalt',goal:'need',kw:['IKEA','JYSK','OBI','BAUHAUS']}]},
+ {id:'digital',name:'Abos & Digital',color:'#B08968',subs:[
+   {id:'ki',name:'Software & KI',goal:'want',kw:['CLAUDE.AI','ANTHROPIC','OPENAI','GITHUB','ADOBE']},
+   {id:'streaming',name:'Streaming',goal:'want',kw:['NETFLIX','SPOTIFY','DISNEY','AMAZON PRIME','DAZN']},
+   {id:'cloud',name:'Cloud',goal:'want',kw:['GOOGLE ONE','DROPBOX','ICLOUD']},
+   {id:'hosting',name:'Hosting',goal:'need',kw:['IONOS','STRATO','NETCUP']}]},
+ {id:'shopping',name:'Shopping',color:'#D4A84E',subs:[
+   {id:'kleidung',name:'Kleidung',goal:'want',kw:['ZALANDO','H&M','ZARA','SNIPES','ABOUT YOU']},
+   {id:'elektronik',name:'Elektronik',goal:'want',kw:['MEDIAMARKT','SATURN','APPLE','CYBERPORT']},
+   {id:'moebel',name:'Möbel',goal:'want',kw:[]},
+   {id:'geschenke',name:'Geschenke',goal:'want',kw:['BLUMEN','GESCHENK']},
+   {id:'sonstiges',name:'Sonstiges',goal:'want',kw:['AMAZON','AMZN']}]},
+ {id:'gesund',name:'Gesundheit',color:'#4FB3A0',subs:[
+   {id:'physio',name:'Physio',goal:'need',kw:['PHYSIO']},
+   {id:'apotheke',name:'Apotheke',goal:'need',kw:['APOTHEKE']},
+   {id:'arzt',name:'Arzt',goal:'need',kw:['ARZT','PRAXIS','ZAHN']},
+   {id:'supp',name:'Supplements',goal:'want',kw:['YPSI','SUPPLEMENT','MYPROTEIN']},
+   {id:'pflege',name:'Körperpflege',goal:'want',kw:['FARBECHT','FRISEUR','BARBER','SALON','KOSMETIK']}]},
+ {id:'sport',name:'Sport',color:'#7FA3B8',subs:[
+   {id:'studio',name:'Fitnessstudio',goal:'want',kw:['FITNESS','MCFIT','GYM','A.I. FITNESS']},
+   {id:'verein',name:'Verein',goal:'want',kw:['MITGLIEDSBEITRAG','MANNSCHAFTSKASSE','TBO','BAYER04']},
+   {id:'ausruestung',name:'Ausrüstung',goal:'want',kw:['DECATHLON','SPORTSCHECK']}]},
+ {id:'versicherung',name:'Versicherung',color:'#C08AB0',subs:[
+   {id:'kranken',name:'Kranken',goal:'need',kw:['DEBEKA','BKK','AOK','TK ','BARMER','EY BKK']},
+   {id:'leben',name:'Leben & BU',goal:'need',kw:['ALTE LEIPZIGER','LEBENSVERSICHERUNG','BERUFSUNFAEHIG']},
+   {id:'unfall',name:'Unfall',goal:'need',kw:['UNFALL']},
+   {id:'haftpflicht',name:'Haftpflicht',goal:'need',kw:['HAFTPFLICHT','BERUFSHAFTPFLICHT']}]},
+ {id:'vorsorge',name:'Vorsorge',color:'#6E8AC4',subs:[
+   {id:'depot',name:'ETF & Depot',goal:'save',kw:['SCALABLE','TRADE REPUBLIC','SPARPLAN','DEPOT']},
+   {id:'steuer',name:'Steuerrücklage',goal:'save',kw:['STEUER PAUSCHALE','STEUERRUECKLAGE']},
+   {id:'notgroschen',name:'Notgroschen',goal:'save',kw:['NOTGROSCHEN']}]},
+ {id:'bildung',name:'Bildung',color:'#A8894E',subs:[
+   {id:'studium',name:'Studium',goal:'need',kw:['HOCHSCHULE','SEMESTER','STUDIERENDEN']},
+   {id:'literatur',name:'Fachliteratur',goal:'want',kw:['THALIA','BUCHHANDL']},
+   {id:'kurse',name:'Kurse',goal:'want',kw:['UDEMY','COURSERA','ASI ']}]},
+ {id:'geschaeft',name:'Geschäftlich',color:'#9B7FC4',subs:[
+   {id:'wareneinsatz',name:'Wareneinsatz',goal:'need',kw:[]},
+   {id:'werbung',name:'Werbung',goal:'need',kw:[]},
+   {id:'gebuehren',name:'Gebühren',goal:'need',kw:[]},
+   {id:'fahrt',name:'Fahrtkosten',goal:'need',kw:[]}]},
+ {id:'einkommen',name:'Einkommen',color:'#3FBFB0',subs:[
+   {id:'gehalt',name:'Gehalt',goal:'need',kw:['LOHN','GEHALT','AIR LIQ']},
+   {id:'honorar',name:'Honorar',goal:'need',kw:['RECHNUNG','RE1','RE 1','HONORAR']},
+   {id:'sonderzahlung',name:'Sonderzahlung',goal:'need',kw:['URLAUBSGELD','WEIHNACHTSGELD']},
+   {id:'zinsen',name:'Zinsen',goal:'need',kw:['ABSCHLUSSPERIODE','HABENZINS','ZINSGUTSCHRIFT']},
+   {id:'sonstige',name:'Sonstige Einnahmen',goal:'need',kw:['KINDERGELD']}]},
+];
+
+let S={me:{name:'',addr:''},hidden:[],fc:{start:0,from:null,base:0,events:[]},tx:[],cats:JSON.parse(JSON.stringify(CATS)),learn:{},pots:[],open:{},bal:{},goals:{need:50,want:30,save:20}};
+
+/* ============ Speicher ============ */
+const store=(()=>{
+  try{localStorage.setItem('__k','1');localStorage.removeItem('__k');
+    return{get:()=>localStorage.getItem(KEY),set:v=>localStorage.setItem(KEY,v)};
+  }catch(e){
+    if(typeof window!=='undefined'&&window.storage) return{
+      get:async()=>{try{const r=await window.storage.get(KEY,false);return r?r.value:null}catch(_){return null}},
+      set:async v=>{try{await window.storage.set(KEY,v,false)}catch(_){}}};
+    return{get:()=>null,set:()=>{}};
+  }
+})();
+async function load(){
+  try{const raw=await store.get();if(!raw)return;const p=JSON.parse(raw);
+    if(Array.isArray(p.tx))S.tx=p.tx;
+    if(Array.isArray(p.cats)&&p.cats.length)S.cats=p.cats;
+    if(p.learn)S.learn=p.learn;
+    if(Array.isArray(p.pots))S.pots=p.pots;
+    if(p.goals)S.goals=p.goals;
+    if(p.bal)S.bal=p.bal;
+    if(p.me)S.me=p.me;
+    if(Array.isArray(p.hidden))S.hidden=p.hidden;
+    if(p.fc)S.fc=Object.assign({start:0,from:null,base:0,events:[]},p.fc);
+  }catch(e){}
+}
+let sT=null;
+function save(){clearTimeout(sT);sT=setTimeout(async()=>{try{await store.set(JSON.stringify(S))}catch(e){toast('Speichern fehlgeschlagen')}},120)}
+
+/* ============ Helfer ============ */
+// Eigener Name/Adresse stehen in Auszügen als Absender und würden sonst als
+// Verwendungszweck gelesen. Bewusst als Einstellung, nicht im Code.
+function myLines(){
+  return [S.me.name||'',...(S.me.addr||'').split(/[,;\n]/)]
+    .map(x=>squash(x)).filter(x=>x.length>2);
+}
+function isMine(line){const L=squash(line);return myLines().some(m=>L.includes(m))}
+const eur=n=>n.toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+const eurS=n=>Math.abs(n)>=10000?(n/1000).toLocaleString('de-DE',{maximumFractionDigits:1})+'k €':eur(n);
+const pc=n=>n.toLocaleString('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1})+' %';
+const dmy=i=>{const[y,m,d]=i.split('-');return`${d}.${m}.${y.slice(2)}`};
+const uid=()=>(self.crypto&&crypto.randomUUID?crypto.randomUUID():'x'+Date.now()+Math.random().toString(16).slice(2));
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const acc=id=>ACCOUNTS.find(a=>a.id===id)||{name:'?',kind:'privat'};
+const cat=id=>S.cats.find(c=>c.id===id);
+function sub(cid,sid){const c=cat(cid);return c?c.subs.find(s=>s.id===sid):null}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove('on'),2800)}
+function stat(m,c){const e=document.getElementById('stat');e.textContent=m||'';e.className=c||'';if(m){clearTimeout(stat._h);stat._h=setTimeout(()=>{e.textContent='';e.className=''},6000)}}
+const MON=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+const mLabel=ym=>MON[+ym.split('-')[1]-1]+' '+ym.split('-')[0].slice(2);
+function addM(ym,n){let[y,m]=ym.split('-').map(Number);m+=n;while(m<1){m+=12;y--}while(m>12){m-=12;y++}return`${y}-${String(m).padStart(2,'0')}`}
+
+// PDF-Extraktion klebt je nach Betrachter Wörter zusammen ("PhysioRuecklage").
+// Für Anzeige auftrennen, fürs Matching Leerzeichen ganz ignorieren.
+function unglue(s){
+  return String(s||'')
+    .replace(/([a-zäöüß0-9])([A-ZÄÖÜ])/g,'$1 $2')
+    .replace(/([A-ZÄÖÜ]{2,})([A-ZÄÖÜ][a-zäöüß])/g,'$1 $2')
+    .replace(/\s{2,}/g,' ').trim();
+}
+const squash=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9ÄÖÜ]/g,'');
+
+/* ============ Zahlenformate ============ */
+const deNum=s=>parseFloat(String(s).replace(/\./g,'').replace(',','.'));   // 1.234,56
+const chNum=s=>parseFloat(String(s).replace(/'/g,''));                      // 9'390.44
+
+/* ============ Format-Erkennung ============ */
+// Reihenfolge nach Eindeutigkeit: fremde IBANs tauchen als Gegenkonto in jedem Auszug
+// auf (die Volksbank-BIC steht z.B. im N26-Auszug), taugen also nicht zur Erkennung.
+function detectFormat(lines){
+  const t=lines.join(' ');
+  if(/Bu-Tag/i.test(t))return'vb';
+  if(/Saldovortrag|Zu\s?Ihren\s?Lasten|willbe-invest/i.test(t))return'wb';
+  if(/Verbuchungsdatum|NTSBDEB1XXX/i.test(t))return'n26';
+  if(/\d{2}\.\d{2}\.\s+\d{2}\.\d{2}\.\s+.+\s+[\d.]+,\d{2}\s+[SH]/.test(t))return'vb';
+  return null;
+}
+
+/* ============ Parser: Volksbank ============ */
+const VB_ROW=/^(\d{2})\.(\d{2})\.\s+(\d{2})\.(\d{2})\.\s+(.+?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+([SH])\s*$/;
+const VB_SKIP=/^(Volksbank|Am Innenhafen|Postfach \d|Herrn$|Kontokorrent|EUR-Konto|Kontoauszug\s*$|erstellt am|Blatt \d|IBAN:\s*[A-Z]{2}\d|Ihr Berater|E-Mail:|-{4,}|─{4,}|Bu-Tag|Wert Vorgang|Übertrag (auf|von) Blatt|(alter|neuer) Kontostand|Bitte beachten|Sehr geehrte|Mit freundlichen|Ihre Bank|Kontonummer|Nr\.\s*\d+\/\d+|^\d{1,6}$|^K\d{4,}$|^\dM\s|Sie haben|Rechnungsabschl|Einwendungen|Einzugs|Guthaben sind|Falls in diesem|Wir sind gern|Damit Sie|Korrekturen|Schecks|Barschecks)/i;
+const VB_GEN=/^(Dauerauftragsbelast|Basislastschrift|Lastschrift|Überweisungsgutschr\.?|Gutschrift|Kartenzahlung girocard|Lohn\/Gehalt\/Rente)/i;
+
+function parseVB(lines){
+  const t=lines.join(' ');
+  const s=t.match(/alter Kontostand vom \d{2}\.(\d{2})\.(\d{4})/i);
+  const e=t.match(/neuer Kontostand vom \d{2}\.\d{2}\.(\d{4})/i);
+  const sM=s?+s[1]:null,sY=s?+s[2]:new Date().getFullYear(),eY=e?+e[1]:sY;
+  const yr=m=>sM===null?eY:(m<sM?eY:sY);
+  const bl=[];let cur=null;
+  for(const raw of lines){
+    const L=raw.replace(/\s+/g,' ').trim();if(!L)continue;
+    const m=L.match(VB_ROW);
+    if(m){const[,dd,mm,,,vg,a,sh]=m;
+      let v=deNum(a);v=sh.toUpperCase()==='S'?-Math.abs(v):Math.abs(v);
+      cur={date:`${yr(+mm)}-${mm}-${dd}`,vg:vg.trim(),amt:v,det:[]};bl.push(cur);continue}
+    if(cur&&!VB_SKIP.test(L))cur.det.push(L);
+  }
+  const list=bl.map(b=>mk('vb',b.date,vbMerchant(b.vg,b.det),VB_GEN.test(b.vg)?b.vg.replace(/\.$/,''):'',b.amt,`${b.vg} ${b.det.join(' ')}`));
+  const es=t.match(/neuer Kontostand vom (\d{2})\.(\d{2})\.(\d{4})\s+([\d.]+,\d{2})\s*([SH])/i);
+  if(es)list.balance={date:`${es[3]}-${es[2]}-${es[1]}`,amt:(es[5].toUpperCase()==='S'?-1:1)*deNum(es[4])};
+  return list;
+}
+const NOISE=/\s+(IBAN|EREF|MREF|CRED|BIC|ABWA|Vers-Nr|Auftragsnummer)\s*:/i;
+function vbMerchant(vg,det){
+  const d0=(det[0]||'').trim(),d1=(det[1]||'').trim(),all=det.join(' ');
+  if(/^Dauerauftragsbelast/i.test(vg)){
+    const m=all.match(/([^*]+?)\s*\/\*DA-\d+\*/);
+    if(m){let s=m[1];
+      // Vor dem Zweck steht der Auftraggeber (man selbst) — wegschneiden
+      for(const w of (S.me.name||'').split(/\s+/).filter(x=>x.length>2))
+        s=s.replace(new RegExp('^.*?\\b'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b\\s*','i'),'');
+      return clean(s);}
+    return clean(d1||d0);
+  }
+  if(/^(Basislastschrift|Lastschrift)/i.test(vg)){
+    if(/PayPal/i.test(d0)){
+      const m=all.match(/Ihr Einkauf bei\s+([A-Za-zÄÖÜäöü0-9][^,]*?)\s+EREF/i)||all.match(/PP\.\d+\.PP\/\.\s*([A-Za-zÄÖÜäöü][^,]*?),\s*Ihr Einkauf/i);
+      return m&&m[1].trim()?'PayPal · '+clean(m[1]):'PayPal (Empfänger unbenannt)';
+    }
+    return clean(d0);
+  }
+  if(/^(Überweisungsgutschr|Gutschrift)/i.test(vg))return clean(d1||d0);
+  if(/^Kartenzahlung girocard/i.test(vg))return clean((d1||d0).split('/')[0]);
+  if(/^Lohn\/Gehalt\/Rente/i.test(vg))return clean(d0)||'Gehalt';
+  return clean(vg);
+}
+function clean(s){
+  return unglue(String(s||'').split(NOISE)[0])
+    .replace(/\/\*DA-\d+\*/g,'').replace(/\s{2,}/g,' ')
+    .replace(/^[\s,.;:*\-]+|[\s,.;:*\-]+$/g,'').slice(0,60).trim();
+}
+
+/* ============ Parser: N26 ============ */
+// Kopfzeile: "ANDREAS LUTHE 04.05.2026 +129,00€"; Folgezeilen = Details, Verwendungszweck vor "Wertstellung".
+const N26_ROW=/^(.+?)\s+(\d{2})\.(\d{2})\.(\d{4})\s+([+-])\s?([\d.]+,\d{2})\s?€\s*$/;
+// Fuß-/Kopfzeilen jeder Seite. Adresszeile über PLZ+Ort erkannt, damit ohne
+// hinterlegten Namen kein Absender im Verwendungszweck landet.
+const N26_SKIP=/(^IBAN:|Erstellt am|^Nr\.\s*\d|^\d\s*\/\s*\d\s*$|^Beschreibung|^Kontoauszug|^\d{2}\.\d{2}\.\d{4} bis|\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+)/i;
+// Ab der Zusammenfassungs-/AGB-Seite gehört nichts mehr zur letzten Buchung.
+const N26_END=/^(Zusammenfassung|Anmerkung|Dein (alter|neuer) Kontostand|Ausgehende Transaktionen|Einkommende Transaktionen|Unsere Allgemeinen|Es kann zu|Dein Guthaben|Dein N26)/i;
+function parseN26(lines){
+  const bl=[];let cur=null;
+  for(const raw of lines){
+    const L=raw.replace(/\s+/g,' ').trim();if(!L)continue;
+    if(N26_END.test(L)){cur=null;continue}
+    const m=L.match(N26_ROW);
+    if(m){
+      const[,who,dd,mm,yy,sg,a]=m;
+      cur={date:`${yy}-${mm}-${dd}`,who:who.trim(),amt:(sg==='-'?-1:1)*deNum(a),det:[]};bl.push(cur);continue;
+    }
+    if(cur&&!N26_SKIP.test(L))cur.det.push(L);
+  }
+  const list=bl.map(b=>{
+    // Reihenfolge: [Gutschriften|Belastungen], IBAN…, Zweck…, Wertstellung…
+    const purpose=b.det.filter(d=>!/^(Gutschriften|Belastungen|IBAN:|Wertstellung)/i.test(d)&&!isMine(d)).join(' ').trim();
+    return mk('n26',b.date,clean(b.who),clean(purpose).slice(0,60),b.amt,`${b.who} ${b.det.join(' ')}`);
+  });
+  const es=lines.join(' ').match(/Dein neuer Kontostand\s*([+-]?)\s?([\d.]+,\d{2})\s?€/i);
+  if(es&&list.length){const ds=list.map(x=>x.date).sort();
+    list.balance={date:ds[ds.length-1],amt:(es[1]==='-'?-1:1)*deNum(es[2])}}
+  return list;
+}
+
+/* ============ Parser: willbe CSV-Export ============ */
+function csvRows(text){
+  const rows=[];let row=[],cur='',q=false;
+  text=text.replace(/^\uFEFF/,'');
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++} else q=false } else cur+=c;
+    }else if(c==='"')q=true;
+    else if(c===','){row.push(cur);cur=''}
+    else if(c==='\r'){}
+    else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur=''}
+    else cur+=c;
+  }
+  if(cur!==''||row.length){row.push(cur);rows.push(row)}
+  return rows.filter(r=>r.some(x=>x!==''));
+}
+// Betrag steht als "20,00" bzw. "- 160,00" — Minus mit Leerzeichen abgesetzt.
+function csvAmt(s){
+  const t=String(s||'').replace(/\s/g,'');
+  if(!t)return null;
+  const v=deNum(t.replace('-',''));
+  return isFinite(v)?(t.startsWith('-')?-v:v):null;
+}
+function parseCSV(raw){
+  const rows=csvRows(raw);
+  if(!rows.length)return[];
+  const head=rows[0].map(x=>x.trim());
+  const ix=n=>head.indexOf(n);
+  const iTxt=ix('Buchungstext'),iAmt=ix('Buchungsbetrag'),iDat=ix('Buchungsdatum'),iTyp=ix('Transaktion');
+  if(iTxt<0||iAmt<0||iDat<0)return[];
+  const out=[];
+  for(const r of rows.slice(1)){
+    const dm=(r[iDat]||'').match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    const amt=csvAmt(r[iAmt]);
+    if(!dm||amt===null)continue;
+    const ls=(r[iTxt]||'').split('\n').map(x=>x.trim()).filter(Boolean);
+    // Zeile 0 ist die Buchungsart, danach Auftraggeber/Adresse, zuletzt der Zweck
+    const pool=ls.slice(1).filter(l=>!/^Auftragsnummer/i.test(l)&&!/^\d{5}\s/.test(l)&&!isMine(l));
+    const purpose=clean(pool.length?pool[pool.length-1]:'')||clean(ls[0]||'')||(r[iTyp]||'Buchung');
+    out.push(mk('wb',`${dm[3]}-${dm[2]}-${dm[1]}`,purpose,clean(ls[0]||''),amt,ls.join(' ')));
+  }
+  return out;
+}
+
+/* ============ Parser: willbe / LLB (PDF) ============ */
+// "01.04. Gutschrift 01.04. 3.75 9'527.44" — Lasten/Haben stehen nicht im Text,
+// deshalb wird die Richtung über die Saldoentwicklung bestimmt.
+const WB_ROW=/^(\d{2})\.(\d{2})\.\s+(.+?)\s+\d{2}\.\d{2}\.\s+([\d']+\.\d{2})\s+([\d']+\.\d{2})\s*$/;
+const WB_VOR=/^(\d{2})\.(\d{2})\.\s+Saldovortrag\s+([\d']+\.\d{2})\s*$/i;
+const WB_SKIP=/^(Elektronisch|Kontonummer|IBAN|Kontoauszug|Datum\s|Vaduz|Seite|Konditionen|Sollzinsen|Habenzinsen|Bei Überschreitungen|Einlagen auf|willbe|Liechtenstein|Städtle|Sitz Vaduz|Registerbeh|HR FL|service@|www\.|DEUTSCHLAND|Germany|[\d'-]+$|\d{5}\s)/i;
+// Der senkrechte Randtext des Auszugs ("ACC_STMT_MTH_DT_LLB", "GNIKNABE") landet als
+// eigene Zeile. Bewusst OHNE /i, sonst verschluckt {6,} jedes normale Wort.
+const WB_ROT=/^[A-Z]{2,}(_[A-Z]{2,})+(\s|$)|^[A-Z_]{6,}$/;
+const WB_END=/^(Saldo\s?per|Umsatz\s)/i;
+function parseWB(lines){
+  const t=lines.join(' ');
+  const per=t.match(/Kontoauszug in EUR\s+(\d{2})\.(\d{2})\.(\d{4})\s*[-–]\s*(\d{2})\.(\d{2})\.(\d{4})/i);
+  const sY=per?+per[3]:new Date().getFullYear(),sMo=per?+per[2]:null,eY=per?+per[6]:sY;
+  const yr=m=>sMo===null?sY:(m<sMo?eY:sY);
+  let bal=null;const bl=[];let cur=null;
+  for(const raw of lines){
+    const L=raw.replace(/\s+/g,' ').trim();if(!L)continue;
+    if(WB_ROT.test(L))continue;
+    if(WB_END.test(L)){cur=null;continue}          // ab hier nur noch Saldo/Konditionen
+    const v=L.match(WB_VOR);
+    if(v){bal=chNum(v[3]);cur=null;continue}
+    const m=L.match(WB_ROW);
+    if(m){
+      const[,dd,mm,txt,amtS,balS]=m;
+      const amt=chNum(amtS),nb=chNum(balS);
+      // Richtung aus der Saldoänderung; beim ersten Posten ohne Vortrag Textfallback
+      let sign;
+      if(bal!==null)sign=(nb-bal)>=0?1:-1;
+      else sign=/Gutschrift|Zinsen/i.test(txt)?1:-1;
+      bal=nb;
+      cur={date:`${yr(+mm)}-${mm}-${dd}`,vg:unglue(txt.trim()),amt:sign*Math.abs(amt),det:[]};
+      bl.push(cur);continue;
+    }
+    if(cur&&!WB_SKIP.test(L))cur.det.push(unglue(L));
+  }
+  const list=bl.map(b=>{
+    // Zweck = erste Detailzeile, die nicht der eigene Name/Adresse ist
+    // Aufbau ist immer [Auftraggeber, (Adresse…), Zweck, Auftragsnummer] —
+    // der Zweck ist also die letzte Zeile vor der Auftragsnummer.
+    const ix=b.det.findIndex(d=>/^Auftragsnummer/i.test(d));
+    const pool=(ix>0?b.det.slice(0,ix):b.det).filter(d=>!isMine(d));
+    const purpose=clean(pool.length?pool[pool.length-1]:'')||b.vg;
+    return mk('wb',b.date,purpose,b.vg,b.amt,`${b.vg} ${b.det.join(' ')}`);
+  });
+  // Endsaldo aus dem Auszug: die Buchungssumme allein kennt den Altbestand nicht.
+  const end=t.match(/Saldo\s?per\s?(\d{2})\.(\d{2})\.(\d{4})\s+([\d']+\.\d{2})/i);
+  if(end)list.balance={date:`${end[3]}-${end[2]}-${end[1]}`,amt:chNum(end[4])};
+  else if(bal!==null&&list.length)list.balance={date:list[list.length-1].date,amt:bal};
+  return list;
+}
+
+/* ============ Buchung bauen ============ */
+function mk(accId,date,merchant,note,amt,hay){
+  const m=merchant||'Unbekannt';
+  const g=suggest(m,hay);
+  return{id:uid(),acc:accId,date,merchant:m,note:note||'',amt:Math.round(amt*100)/100,
+         cat:g.cat,sub:g.sub,manual:false,biz:false,ign:false,tr:null,pot:null};
+}
+
+/* ============ Lernen & Vorschlag ============ */
+function mkey(m){return squash(m).slice(0,26)}
+function learnable(m){const k=mkey(m);return k.length>=3&&!/UNBENANNT|UNBEKANNT|^PAYPAL$/.test(k)}
+function suggest(merchant,hay){
+  if(learnable(merchant)){const l=S.learn[mkey(merchant)];if(l)return{cat:l.cat,sub:l.sub}}
+  const H=squash(hay||merchant);
+  let best=null;
+  for(const c of S.cats)for(const s of c.subs)for(const w of (s.kw||[])){
+    const W=squash(w);
+    if(W&&H.includes(W)&&(!best||W.length>best.len))best={cat:c.id,sub:s.id,len:W.length};
+  }
+  return best?{cat:best.cat,sub:best.sub}:{cat:'',sub:''};
+}
+function setCat(id,val){
+  const t=S.tx.find(x=>x.id===id);if(!t)return;
+  const[c,s]=val?val.split('|'):['',''];
+  t.cat=c;t.sub=s;t.manual=true;
+  let also=0;
+  if(c&&learnable(t.merchant)){
+    const k=mkey(t.merchant);S.learn[k]={cat:c,sub:s};
+    for(const o of S.tx){if(o.id===t.id||o.manual)continue;
+      if(mkey(o.merchant)===k&&(o.cat!==c||o.sub!==s)){o.cat=c;o.sub=s;also++}}
+  }
+  save();render();
+  toast(also?`Gemerkt — ${also} weitere übernommen`:'Gemerkt');
+}
+
+/* ============ Umbuchungen zwischen eigenen Konten ============ */
+// Gegenbuchung: gleicher Betrag, entgegengesetzt, anderes Konto, max. 6 Tage Abstand.
+function linkTransfers(){
+  for(const t of S.tx)t.tr=null;
+  const by=[...S.tx].sort((a,b)=>a.date.localeCompare(b.date));
+  for(let i=0;i<by.length;i++){
+    const a=by[i];if(a.tr||a.amt===0)continue;
+    for(let j=0;j<by.length;j++){
+      const b=by[j];
+      if(b.tr||b===a||b.acc===a.acc)continue;
+      if(Math.abs(a.amt+b.amt)>0.005)continue;
+      if(Math.abs(new Date(a.date)-new Date(b.date))>6*864e5)continue;
+      a.tr=b.id;b.tr=a.id;break;
+    }
+  }
+}
+const isTransfer=t=>!!t.tr;
+const onReserve=t=>acc(t.acc).kind==='ruecklage';
+// Zufluss aufs Rücklagenkonto ist Sparen, nicht Einkommen. Abfluss ist Verwendung,
+// keine neue Ausgabe — die Ausgabe war die monatliche Rate.
+const isSaving=t=>onReserve(t)&&t.amt>0;
+const inFlow=t=>!isTransfer(t)&&!onReserve(t);
+
+/* ============ Töpfe ============ */
+// Aus den Zuflüssen aufs Rücklagenkonto, gruppiert nach Zweck.
+// Zinsabschlüsse ("Periode …"), Umbuchungen und Zuflüsse ohne eigenen Zweck
+// sind keine Rücklagentöpfe.
+const GROUPS=[
+  {id:'fix', name:'Feste Jahresrechnungen'},
+  {id:'flex',name:'Flexible Rücklagen'},
+  {id:'not', name:'Notgroschen'},
+  {id:'umz', name:'Umzug'},
+  {id:'',    name:'Noch nicht zugeordnet'},
+];
+function guessGroup(name,rate){
+  const n=squash(name);
+  if(/NOTGROSCHEN|PUFFER/.test(n))return'not';
+  if(/UMZUG|WOHNUNG|KAUTION/.test(n))return'umz';
+  if(/URLAUB|GESCHENK|PHYSIO|MANNSCHAFT|THERAPIE|SPAREN/.test(n))return'flex';
+  return rate>0?'fix':'';
+}
+const POT_SKIP=/^(Periode\s|Abschluss|Gutschrift$|Zahlung\s|Überweisung|Ueberweisung|E-Banking|Buchung$)|^[A-Z]{2,}(_[A-Z]{2,})+/i;
+function derivePots(){
+  const found={};
+  for(const t of S.tx){
+    if(acc(t.acc).kind!=='ruecklage'||t.amt<=0)continue;
+    if(POT_SKIP.test(t.merchant))continue;
+    const k=mkey(t.merchant);if(!k)continue;
+    if(!found[k])found[k]={key:k,name:t.merchant,rate:0,inSum:0,n:0,last:'',hist:[]};
+    found[k].inSum+=t.amt;found[k].n++;found[k].hist.push({d:t.date,a:t.amt});
+    if(t.date>found[k].last)found[k].last=t.date;
+  }
+  // Rate = aktueller Stand: häufigster Betrag der jüngsten Zuflüsse. Der Modus über
+  // die ganze Historie wäre falsch, sobald die Rate einmal erhöht wurde.
+  for(const f of Object.values(found)){
+    if(f.n<3){f.rate=0;f.prev=null;continue}
+    f.hist.sort((x,y)=>x.d.localeCompare(y.d));
+    const mode=arr=>{const c={};let b=null;
+      for(const a of arr){const k=a.toFixed(2);c[k]=(c[k]||0)+1;if(!b||c[k]>c[b])b=k}
+      return b?parseFloat(b):0};
+    const recent=f.hist.slice(-6).map(x=>x.a);
+    f.rate=mode(recent);
+    const older=f.hist.slice(0,-6).map(x=>x.a);
+    const before=older.length>=3?mode(older):null;
+    f.prev=(before!==null&&Math.abs(before-f.rate)>0.005)?before:null;
+  }
+  for(const f of Object.values(found)){
+    if((S.hidden||[]).includes(f.key))continue;
+    let p=S.pots.find(p=>p.key===f.key);
+    if(!p){p={id:uid(),key:f.key,name:f.name,rate:f.rate,target:null,start:0,manual:false,
+              group:guessGroup(f.name,f.rate)};S.pots.push(p)}
+    else if(!p.manual){p.name=f.name;p.rate=f.rate}
+    p.inSum=f.inSum;p.n=f.n;p.last=f.last;p.prev=f.prev;
+  }
+  for(const p of S.pots){if(p.inSum===undefined){p.inSum=0;p.n=0;p.last=''}}
+}
+// ===== Topf-Rechnung =====
+// Modell: Jahresbetrag + Fälligkeitsmonat eingeben, Rate ergibt sich daraus.
+// Der Bestand wird einmal zu einem Stichtag gesetzt und danach fortgeschrieben.
+// Rate eines Topfes: bei Jahresrechnungen Betrag/12, bei Sparzielen die noch
+// nötige Monatsrate bis zum Zieltermin. Dadurch steckt sie automatisch im Forecast.
+// Basisrate ohne Sparziel-Rechnung — potBalance nutzt nur diese, sonst kreisen
+// potRate und potBalance gegenseitig.
+const potMonths=p=>Array.isArray(p.months)?p.months:[];
+// Was der Topf im Jahr braucht und welche Rate dafür nötig wäre
+function potNeedRate(p){
+  const ms=potMonths(p);
+  if(!p.amount||!ms.length)return null;
+  return Math.round(p.amount*ms.length/12*100)/100;
+}
+// Soll-Rate: was monatlich nötig ist, damit zur Abbuchung genug da ist
+const baseRate=p=>{const n=potNeedRate(p);return p.rate||n||0};
+// Letzter Abbuchungstermin, der schon vorbei ist. Der laufende Monat zählt noch
+// nicht als abgebucht — steht die Zahlung diesen Monat an, ist der Topf voll.
+function lastDue(p){
+  const ms=potMonths(p);if(!ms.length)return null;
+  const now=nowYM();
+  for(let i=1;i<=24;i++){
+    const ym=addM(now,-i);
+    if(ms.includes(+ym.split('-')[1]))return ym;
+  }
+  return null;
+}
+function potRate(p){
+  if(p.year||!p.target||!p.until)return baseRate(p);
+  const left=monthsBetween(nowYM(),p.until);
+  return left>0?Math.round(Math.max(0,(p.target-potBalance(p))/left)*100)/100:0;
+}
+function monthsBetween(a,b){const[x,y]=a.split('-').map(Number),[u,v]=b.split('-').map(Number);return(u-x)*12+(v-y)}
+const nowYM=()=>new Date().toISOString().slice(0,7);
+
+// Bestand heute: Stichtagswert + tatsächliche Zuflüsse − zugeordnete Entnahmen.
+// Ohne importierte Bewegungen wird rechnerisch mit der Rate fortgeschrieben.
+function potBalance(p){
+  const ms=potMonths(p);
+  // Feste Rechnungen: Bestand ergibt sich aus den Monaten seit der letzten Abbuchung
+  if(p.amount&&ms.length){
+    const ld=lastDue(p);
+    const n=ld?monthsBetween(ld,nowYM()):0;
+    return Math.round(baseRate(p)*n*100)/100;
+  }
+  // Flexible Töpfe und Sparziele: Stichtagswert fortschreiben
+  const base=p.baseAmt!==undefined&&p.baseAmt!==null?p.baseAmt:0;
+  const from=p.baseYM||null;
+  if(!from)return base;
+  const n=Math.max(0,monthsBetween(from,nowYM()));
+  return base+baseRate(p)*n-potOut(p,from);
+}
+function potOut(p,from){
+  return S.tx.filter(t=>t.pot===p.id&&t.amt<0&&(!from||t.date.slice(0,7)>from))
+             .reduce((s,t)=>s+Math.abs(t.amt),0);
+}
+// Nächster Fälligkeitstermin aus dem eingestellten Monat
+// Der laufende Monat zählt mit: steht die Abbuchung diesen Monat an, ist sie die nächste.
+function nextDue(p){
+  const ms=potMonths(p);if(!ms.length)return null;
+  const now=nowYM();
+  for(let i=0;i<=24;i++){
+    const ym=addM(now,i);
+    if(ms.includes(+ym.split('-')[1]))return ym;
+  }
+  return null;
+}
+function wbBalance(){
+  const b=S.bal&&S.bal.wb;
+  if(b)return b.amt+S.tx.filter(t=>t.acc==='wb'&&t.date>b.date).reduce((s,t)=>s+t.amt,0);
+  return S.tx.filter(t=>t.acc==='wb').reduce((s,t)=>s+t.amt,0)+S.pots.reduce((s,p)=>s+(p.start||0),0);
+}
+
+/* ============ Auswertung ============ */
+function monthsAll(){return [...new Set(S.tx.map(t=>t.date.slice(0,7)))].sort()}
+function rangeMonths(){
+  const all=monthsAll();if(!all.length)return[];
+  const n=+document.getElementById('range').value;
+  return n>0?all.slice(-n):all;
+}
+function scopeVal(){return document.getElementById('scope').value}
+function inScope(t){
+  const s=scopeVal(),k=acc(t.acc).kind;
+  if(s==='privat')return k!=='geschaeft'&&!t.biz;
+  if(s==='geschaeft')return k==='geschaeft'||t.biz;
+  return true;
+}
+function txIn(months){
+  const set=new Set(months);
+  return S.tx.filter(t=>!t.ign&&set.has(t.date.slice(0,7))&&inScope(t));
+}
+function agg(list,months){
+  const n=Math.max(months.length,1);
+  const flow=list.filter(inFlow);
+  const inc=flow.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0);
+  const exp=flow.filter(t=>t.amt<0).reduce((s,t)=>s+Math.abs(t.amt),0);
+  const sav=list.filter(isSaving).reduce((s,t)=>s+t.amt,0);
+  const byCat={},bySub={};
+  for(const t of flow)if(t.amt<0){
+    const c=t.cat||'_';byCat[c]=(byCat[c]||0)+Math.abs(t.amt);
+    const k=c+'|'+(t.sub||'_');bySub[k]=(bySub[k]||0)+Math.abs(t.amt);
+  }
+  // 50/30/20: Sparen = Zuflüsse aufs Rücklagenkonto + Ausgaben in Spar-Unterkategorien
+  let need=0,want=0,save_=sav;
+  for(const t of flow)if(t.amt<0){
+    const s=sub(t.cat,t.sub),g=s?s.goal:'need';
+    if(g==='need')need+=Math.abs(t.amt);else if(g==='want')want+=Math.abs(t.amt);else save_+=Math.abs(t.amt);
+  }
+  return{n,inc,exp,sav,byCat,bySub,need,want,save:save_,
+         avgIn:inc/n,avgOut:exp/n,avgBal:(inc-exp)/n};
+}
+
+/* ============ Rendering ============ */
+function render(){
+  linkTransfers();derivePots();
+  renderScope();renderKpis();renderCats();renderGoals();renderMovers();renderMonths();
+  renderTable();renderPots();renderAssign();renderFc();renderCatEd();
+  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
+  const b=document.getElementById('bOpen');b.textContent=o;b.classList.toggle('zero',!o);
+}
+function renderScope(){
+  const s=document.getElementById('scope');
+  if(s.options.length)return;
+  s.innerHTML='<option value="privat">Privat</option><option value="geschaeft">Geschäftlich</option><option value="all">Alle Konten</option>';
+}
+function renderKpis(){
+  const ms=rangeMonths(),a=agg(txIn(ms),ms);
+  const set=(i,v,d)=>{document.getElementById(i).textContent=v;if(d!==undefined)document.getElementById(i+'D').innerHTML=d};
+  if(!S.tx.length){['kIn','kOut','kBal','kPot'].forEach(i=>set(i,'–',''));return}
+  const lbl=`Ø aus ${a.n} Monat${a.n>1?'en':''}`;
+  set('kIn',eurS(a.avgIn),lbl);
+  set('kOut',eurS(a.avgOut),lbl);
+  set('kBal',eurS(a.avgBal),lbl);
+  document.getElementById('kBal').style.color=a.avgBal>=0?'var(--in)':'var(--alert)';
+  const wb=wbBalance();
+  set('kPot',eurS(wb),`${S.pots.length} Töpfe`);
+}
+function renderCats(){
+  const box=document.getElementById('cats'),ms=rangeMonths(),list=txIn(ms),a=agg(list,ms);
+  document.getElementById('cHint').textContent=a.exp?`Ø ${eur(a.avgOut)} / Monat`:'';
+  const rows=Object.entries(a.byCat).sort((x,y)=>y[1]-x[1]);
+  if(!rows.length){box.innerHTML='<div class="empty">Keine Ausgaben im Zeitraum.</div>';return}
+  const max=rows[0][1];
+  box.innerHTML=rows.map(([cid,val])=>{
+    const c=cid==='_'?{id:'_',name:'Ohne Kategorie',color:'#4A5162',subs:[]}:(cat(cid)||{id:cid,name:cid,color:'#4A5162',subs:[]});
+    const share=a.exp?val/a.exp*100:0,open=!!S.open[cid];
+    const subs=Object.entries(a.bySub).filter(([k])=>k.startsWith(cid+'|')).sort((x,y)=>y[1]-x[1]);
+    return`<div class="cg ${open?'open':''}">
+      <div class="ch" onclick="tog('${cid}')">
+        <div class="nm"><span class="caret">›</span><span class="dot" style="background:${c.color}"></span><em>${esc(c.name)}</em></div>
+        <div class="nums">${eur(val/a.n)}<span class="p">${pc(share)}</span></div>
+        <div class="trk"><div class="fill" style="width:${(val/max*100).toFixed(1)}%;background:${c.color}"></div></div>
+      </div>
+      <div class="sub">${subs.map(([k,v])=>{
+        const sid=k.split('|')[1],s=sub(cid,sid),so=!!S.open[k];
+        const tl=list.filter(t=>t.amt<0&&!isTransfer(t)&&(t.cat||'_')===cid&&(t.sub||'_')===sid)
+                     .sort((x,y)=>y.date.localeCompare(x.date));
+        return`<div class="sr ${so?'open':''}" onclick="tog('${k}')">
+            <span class="sn">${esc(s?s.name:'Ohne Unterkategorie')}</span>
+            ${s?`<span class="gl ${s.goal}">${s.goal==='need'?'Need':s.goal==='want'?'Want':'Save'}</span>`:''}
+            <span class="sv">${eur(v/a.n)}</span></div>
+          <div class="txl">${tl.slice(0,40).map(t=>
+            `<div class="tl"><span>${dmy(t.date)}</span><span class="td">${esc(t.merchant)}</span><span>${eur(Math.abs(t.amt))}</span></div>`
+          ).join('')}${tl.length>40?`<div class="tl"><span class="td">… ${tl.length-40} weitere</span></div>`:''}</div>`;
+      }).join('')}</div></div>`;
+  }).join('');
+}
+function tog(k){S.open[k]=!S.open[k];save();renderCats()}
+function renderGoals(){
+  const ms=rangeMonths(),a=agg(txIn(ms),ms);
+  const base=a.inc;
+  const box=document.getElementById('goals');
+  document.getElementById('gHint').textContent=base?`Basis Ø ${eur(a.avgIn)} Einnahmen`:'';
+  if(!base){box.innerHTML='<div class="empty">Noch keine Einnahmen im Zeitraum.</div>';return}
+  const rows=[['need','Needs',S.goals.need,a.need,'var(--need)'],
+              ['want','Wants',S.goals.want,a.want,'var(--want)'],
+              ['save','Savings',S.goals.save,a.save,'var(--save)']];
+  box.innerHTML=rows.map(([k,lab,tgt,val,col])=>{
+    const p=val/base*100,over=k==='save'?p<tgt:p>tgt;
+    return`<div class="goal">
+      <div class="gtop"><span>${lab}</span><small>Ziel ${tgt} %</small>
+        <b class="${over?'up':'dn'}">${pc(p)}</b></div>
+      <div class="gbar"><i style="width:${Math.min(p,100).toFixed(1)}%;background:${col}"></i>
+        <span class="gmark" style="left:${tgt}%"></span></div>
+      <div class="micro" style="margin-top:2px">Ø ${eur(val/a.n)} / Monat</div>
+    </div>`;
+  }).join('');
+}
+function renderMovers(){
+  const all=monthsAll(),box=document.getElementById('movers');
+  const n=+document.getElementById('range').value||Math.ceil(all.length/2);
+  const half=Math.max(1,Math.min(n,Math.floor(all.length/2)));
+  if(all.length<2){box.innerHTML='<div class="empty">Ab zwei Monaten vergleichbar.</div>';document.getElementById('mHint').textContent='';return}
+  const cur=all.slice(-half),prev=all.slice(-2*half,-half);
+  if(!prev.length){box.innerHTML='<div class="empty">Noch kein Vergleichszeitraum.</div>';return}
+  document.getElementById('mHint').textContent=`${half} vs. ${prev.length} Mon.`;
+  const A=agg(txIn(cur),cur),B=agg(txIn(prev),prev);
+  const keys=new Set([...Object.keys(A.byCat),...Object.keys(B.byCat)]);
+  const rows=[...keys].map(k=>{
+    const a=(A.byCat[k]||0)/cur.length,b=(B.byCat[k]||0)/prev.length;
+    return{k,a,b,d:a-b,p:b>0?(a-b)/b*100:null};
+  }).filter(r=>Math.abs(r.d)>=1).sort((x,y)=>Math.abs(y.d)-Math.abs(x.d)).slice(0,6);
+  if(!rows.length){box.innerHTML='<div class="empty">Keine nennenswerten Änderungen.</div>';return}
+  box.innerHTML=rows.map(r=>{
+    const c=r.k==='_'?{name:'Ohne Kategorie',color:'#4A5162'}:(cat(r.k)||{name:r.k,color:'#4A5162'});
+    const up=r.d>0;
+    return`<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
+      <span class="dot" style="background:${c.color}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+      <span class="mono ${up?'up':'dn'}" style="font-size:11.5px">${up?'▲':'▼'} ${eur(Math.abs(r.d))}</span>
+      <span class="mono" style="font-size:10px;color:var(--dim);width:52px;text-align:right">${r.p===null?'neu':pc(Math.abs(r.p))}</span>
+    </div>`;
+  }).join('');
+}
+function renderMonths(){
+  const ms=rangeMonths(),box=document.getElementById('months');
+  if(!ms.length){box.innerHTML='<div class="empty">Noch keine Daten.</div>';return}
+  const d=ms.map(m=>{const a=agg(txIn([m]),[m]);return{m,inc:a.inc,exp:a.exp}});
+  const max=Math.max(...d.flatMap(x=>[x.inc,x.exp]),1);
+  box.innerHTML=d.map(x=>`<div class="mc" title="${mLabel(x.m)} · ein ${eur(x.inc)} / aus ${eur(x.exp)}">
+    <div class="mp"><div class="mb i" style="height:${(x.inc/max*100).toFixed(1)}%"></div><div class="mb o" style="height:${(x.exp/max*100).toFixed(1)}%"></div></div>
+    <div class="ml">${MON[+x.m.split('-')[1]-1]}</div></div>`).join('');
+}
+function catOpts(t){
+  let o='<option value="">– offen –</option>';
+  for(const c of S.cats){o+=`<optgroup label="${esc(c.name)}">`;
+    for(const s of c.subs){const v=c.id+'|'+s.id;
+      o+=`<option value="${v}"${t.cat===c.id&&t.sub===s.id?' selected':''}>${esc(s.name)}</option>`}
+    o+='</optgroup>'}
+  return o;
+}
+function filtered(){
+  const ms=new Set(rangeMonths());
+  const fc=document.getElementById('fCat').value,ft=document.getElementById('fType').value;
+  return S.tx.filter(t=>{
+    if(!ms.has(t.date.slice(0,7)))return false;
+    if(!inScope(t))return false;
+    if(fc==='_'){if(t.cat)return false}else if(fc&&t.cat!==fc)return false;
+    if(ft==='out'&&(t.amt>=0||!inFlow(t)))return false;
+    if(ft==='in'&&(t.amt<0||!inFlow(t)))return false;
+    if(ft==='none'&&t.cat)return false;
+    if(ft==='tr'&&!isTransfer(t))return false;
+    if(ft==='biz'&&!t.biz)return false;
+    return true;
+  }).sort((a,b)=>b.date.localeCompare(a.date)||Math.abs(b.amt)-Math.abs(a.amt));
+}
+function renderTable(){
+  const r=filtered();
+  document.getElementById('txCt').textContent=`${r.length} Buchungen`;
+  document.getElementById('txB').innerHTML=r.length?r.map(t=>`
+    <tr class="${t.ign||isTransfer(t)?'mut':''}">
+      <td class="dt">${dmy(t.date)}</td>
+      <td class="ds" title="${esc(t.merchant)}${t.note?' · '+esc(t.note):''}">${esc(t.merchant)}${t.note?` <small>· ${esc(t.note)}</small>`:''}</td>
+      <td><span class="acc">${esc(acc(t.acc).name)}</span></td>
+      <td>${isTransfer(t)?'<span class="tag tr">UMBUCHUNG</span>':`<select class="pick" onchange="setCat('${t.id}',this.value)">${catOpts(t)}</select>`}</td>
+      <td class="am ${t.amt>=0?'p':'n'}">${t.amt>=0?'+':'−'}${eur(Math.abs(t.amt))}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="tag ${t.biz?'on':''}" onclick="tBiz('${t.id}')" title="Geschäftlich verauslagt">GB</button>
+        <button class="bare" onclick="delTx('${t.id}')" title="Löschen">✕</button>
+      </td></tr>`).join('')
+    :'<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--dim)">Keine Buchungen in dieser Auswahl.</td></tr>';
+}
+function tBiz(id){const t=S.tx.find(x=>x.id===id);if(t){t.biz=!t.biz;save();render()}}
+function delTx(id){S.tx=S.tx.filter(t=>t.id!==id);save();render()}
+
+function renderPots(){
+  const box=document.getElementById('pots'),wb=wbBalance();
+  document.getElementById('pHint').textContent=`Kontostand ${eur(wb)}`;
+  if(!S.pots.length){box.innerHTML='<div class="empty">Noch keine Töpfe — importiere einen Auszug des Rücklagenkontos oder lege rechts einen an.</div>';}
+  else{
+    box.innerHTML=GROUPS.map(g=>{
+      const ps=S.pots.filter(p=>(p.group||'')===g.id);
+      if(!ps.length)return'';
+      const sum=ps.reduce((s,p)=>s+potBalance(p),0);
+      const rate=ps.reduce((s,p)=>s+(p.rate||0),0);
+      return`<div style="display:flex;align-items:baseline;gap:8px;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--line)">
+        <span class="micro" style="color:var(--mid)">${esc(g.name)}</span>
+        ${rate?`<span class="micro">${eur(rate)}/Mon.</span>`:''}
+        <span class="mono" style="margin-left:auto;font-weight:600">${eur(sum)}</span></div>`
+        +ps.map(potRow).join('');
+    }).join('');
+  }
+  function potRow(p){
+      const b=potBalance(p),rate=potRate(p),spar=p.group==='not'||p.group==='umz',flex=p.group==='flex';
+      const tg=spar?(p.target||0):0,pctv=tg?Math.min(Math.max(b/tg*100,0),100):0;
+      const ms=potMonths(p);
+      const MN=['J','F','M','A','M','J','J','A','S','O','N','D'];
+      const monPicker=MN.map((m,i)=>`<button class="mtog ${ms.includes(i+1)?'on':''}" title="${MON[i]}" onclick="potMonth('${p.id}',${i+1})">${m}</button>`).join('');
+      return`<div class="pot">
+        <div class="ptop"><span>${esc(p.name)}</span>
+          ${rate?`<small>${eur(rate)}/Mon.</small>`:''}
+          <span class="pv">${eur(b)}${tg?` <span style="color:var(--dim)">/ ${eur(tg)}</span>`:''}</span></div>
+        ${tg?`<div class="pbar"><i style="width:${pctv.toFixed(1)}%"></i></div>`:''}
+        ${potHint(p)}
+        <div class="pform">
+          ${(!flex&&!spar)?'':`<label><span class="micro">Zurücklegen</span>
+            <input type="number" value="${p.rate||''}" step="0.01" placeholder="—" onchange="potSet('${p.id}','rate',this.value)"><span class="micro">€/Mon.</span></label>`}
+          ${flex?'':spar?`
+            <label><span class="micro">Ziel</span>
+              <input type="number" value="${p.target||''}" step="1" placeholder="—" onchange="potSet('${p.id}','target',this.value)"></label>
+            <label><span class="micro">bis</span>
+              <input type="month" value="${p.until||''}" style="width:118px" onchange="potSet('${p.id}','until',this.value)"></label>
+          `:`
+            <label><span class="micro">Abbuchung</span>
+              <input type="number" value="${p.amount||''}" step="0.01" placeholder="—" onchange="potSet('${p.id}','amount',this.value)"><span class="micro">€ in</span></label>
+            <span class="mrow">${monPicker}</span>
+            <label><span class="micro">tatsächlich</span>
+              <input type="number" value="${p.rate||''}" step="0.01" placeholder="wie Soll" onchange="potSet('${p.id}','rate',this.value)"><span class="micro">€/Mon.</span></label>
+          `}
+          ${(!flex&&!spar)?'':`<label><span class="micro">Stand</span>
+            <input type="number" value="${p.baseAmt!==undefined&&p.baseAmt!==null?p.baseAmt:''}" step="0.01" placeholder="—" onchange="potSet('${p.id}','baseAmt',this.value)">
+            <span class="micro">am Ende</span>
+            <input type="month" value="${p.baseYM||''}" style="width:118px" onchange="potSet('${p.id}','baseYM',this.value)"></label>`}
+          <span style="margin-left:auto;display:flex;gap:5px;align-items:center">
+            <select onchange="potGroup('${p.id}',this.value)">
+              ${GROUPS.map(g=>`<option value="${g.id}"${(p.group||'')===g.id?' selected':''}>${esc(g.name)}</option>`).join('')}
+            </select>
+            <button class="bare sm" onclick="potDel('${p.id}')">✕</button></span>
+        </div></div>`;
+  }
+
+  const outs=S.tx.filter(t=>acc(t.acc).kind==='ruecklage'&&t.amt<0)
+                 .sort((a,b)=>b.date.localeCompare(a.date));
+  document.getElementById('outs').innerHTML=outs.length?outs.map(t=>`
+    <div style="display:flex;gap:7px;align-items:center;padding:4px 0;border-bottom:1px solid var(--soft)">
+      <span class="mono" style="font-size:11px;color:var(--mid);white-space:nowrap">${dmy(t.date)}</span>
+      <span class="mono" style="font-size:11.5px;color:var(--out);white-space:nowrap">${eur(Math.abs(t.amt))}</span>
+      <select class="pick" style="margin-left:auto;max-width:170px" onchange="setPot('${t.id}',this.value)">
+        <option value="">– offen –</option>
+        ${S.pots.map(p=>`<option value="${p.id}"${t.pot===p.id?' selected':''}>${esc(p.name)}</option>`).join('')}
+      </select></div>`).join('')
+    :'<div class="empty">Keine Entnahmen.</div>';
+  renderRing();
+  const sum=S.pots.reduce((s,p)=>s+potBalance(p),0),rest=wb-sum;
+  document.getElementById('unal').innerHTML=`
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:${Math.abs(rest)<1?'var(--dim)':'var(--out)'}">${eur(rest)}</div>
+    <div class="micro" style="margin-top:4px">Kontostand ${eur(wb)} − Töpfe ${eur(sum)}</div>
+    <div class="note">${rest>1?'Dieser Betrag liegt auf dem Konto, ist aber keinem Topf zugeordnet.':rest<-1?'Die Töpfe übersteigen den Kontostand — prüfe die eingetragenen Bestände.':'Alles zugeordnet.'}</div>`;
+}
+
+// Ringdiagramm: feste Rechnungen als ein Segment, alles Variable einzeln.
+function renderRing(){
+  const box=document.getElementById('ring'),wb=wbBalance();
+  const fixSum=S.pots.filter(p=>(p.group||'')==='fix').reduce((s,p)=>s+potBalance(p),0);
+  const items=[];
+  if(fixSum>0)items.push({n:'Rechnungen',v:fixSum,c:'#5B8FD4'});
+  S.pots.filter(p=>(p.group||'')!=='fix').forEach((p,i)=>{
+    const v=potBalance(p);
+    if(v>0.005)items.push({n:p.name,v,c:PAL[(i+2)%PAL.length]});
+  });
+  const rest=wb-S.pots.reduce((s,p)=>s+potBalance(p),0);
+  if(rest>0.005)items.push({n:'Nicht zugeordnet',v:rest,c:'#4A5162'});
+  document.getElementById('ringTot').textContent=eur(wb);
+  if(!items.length){box.innerHTML='<div class="empty">Noch keine Bestände eingetragen.</div>';return}
+
+  const tot=items.reduce((s,i)=>s+i.v,0),R=54,SW=20,C=2*Math.PI*R;
+  let off=0;
+  const segs=items.map(i=>{
+    const len=i.v/tot*C;
+    const s=`<circle r="${R}" cx="70" cy="70" fill="none" stroke="${i.c}" stroke-width="${SW}"
+      stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"
+      transform="rotate(-90 70 70)"><title>${esc(i.n)}: ${eur(i.v)}</title></circle>`;
+    off+=len;return s;
+  }).join('');
+  box.innerHTML=`<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <svg viewBox="0 0 140 140" width="140" height="140" style="flex-shrink:0">${segs}
+      <text x="70" y="67" text-anchor="middle" fill="var(--mid)" style="font:9.5px 'IBM Plex Mono',monospace;letter-spacing:.08em">GESAMT</text>
+      <text x="70" y="82" text-anchor="middle" fill="var(--txt)" style="font:600 13px 'IBM Plex Mono',monospace">${eurS(tot)}</text>
+    </svg>
+    <div style="flex:1;min-width:170px">${items.map(i=>`
+      <div style="display:flex;align-items:center;gap:7px;padding:2.5px 0;font-size:11.5px">
+        <span class="dot" style="background:${i.c}"></span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.n)}</span>
+        <span class="mono" style="font-size:11px">${eur(i.v)}</span>
+        <span class="mono" style="font-size:10px;color:var(--dim);width:44px;text-align:right">${pc(i.v/tot*100)}</span>
+      </div>`).join('')}</div></div>
+    ${rest<-0.005?`<div class="note">Die Töpfe übersteigen den Kontostand um ${eur(-rest)} — prüfe die eingetragenen Bestände.</div>`:''}`;
+}
+function potHint(p){
+  const b=potBalance(p),rate=potRate(p),now=nowYM();
+  const spar=p.group==='not'||p.group==='umz';
+  const line=t=>`<div class="micro" style="margin-top:3px;line-height:1.55">${t}</div>`;
+  if(p.group==='flex')return line(rate
+    ? `Du legst ${eur(rate)}/Mon. zurück. Entnahmen ordnest du rechts unter „Entnahmen zuordnen“ zu.`
+    : 'Trag ein, wie viel du monatlich zurücklegst.');
+
+  if(spar){
+    if(!p.target)return'';
+    if(!p.until)return line(`Noch ${eur(Math.max(0,p.target-b))} bis zum Ziel — trag einen Termin ein für die Ratenempfehlung.`);
+    const left=monthsBetween(now,p.until);
+    if(left<=0)return line(b>=p.target?'Ziel erreicht.':`Zieltermin vorbei — es fehlen ${eur(p.target-b)}.`);
+    const need=Math.round(Math.max(0,(p.target-b)/left)*100)/100,d=need-rate;
+    return line(`Für ${eur(p.target)} bis ${p.until}: <b class="mono">${eur(need)}/Mon.</b> über ${left} Monate.`
+      +(Math.abs(d)>0.5?` <span class="${d>0?'up':'dn'}">Aktuell ${eur(rate)} — ${d>0?'erhöhen um '+eur(d):eur(-d)+' mehr als nötig'}.</span>`:' Rate passt.'));
+  }
+
+  const ms=potMonths(p),need=potNeedRate(p);
+  if(!p.amount)return ms.length?line('Trag den Abbuchungsbetrag ein.'):line('Trag Betrag und Abbuchungsmonate ein.');
+  if(!ms.length)return line('Trag die Monate ein, in denen abgebucht wird.');
+  const due=nextDue(p),left=monthsBetween(now,due),atDue=b+rate*left,gap=p.amount-atDue;
+  const deck=p.amount?Math.round(b/p.amount*1000)/10:0;
+  let t=`${eur(p.amount)} × ${ms.length}/Jahr → nötig <b class="mono">${eur(need)}/Mon.</b>`
+   +`<br>Aktuell zurückgelegt: <b class="mono">${eur(b)}</b> von ${eur(p.amount)} (${pc(deck)}).`
+   +` Nächste Abbuchung ${MON[+due.split('-')[1]-1]} ${due.slice(0,4)}, bis dahin ${eur(atDue)}.`;
+  if(gap>0.5)t+=` <span class="up">Es fehlen ${eur(gap)}.</span>`;
+  else if(gap<-0.5)t+=` <span class="dn">${eur(-gap)} Puffer.</span>`;
+  else t+=' <span class="dn">Passt genau.</span>';
+  if(p.rate&&need!==null){
+    const d=Math.round((need-p.rate)*100)/100;
+    if(Math.abs(d)>0.005)t+=`<br><span class="${d>0?'up':'dn'}">Du überweist ${eur(p.rate)}/Mon. — `
+      +`${d>0?'um '+eur(d)+' erhöhen':eur(-d)+' mehr als nötig'}.</span>`;
+  }
+  return line(t);
+}
+
+function potSet(id,f,v){const p=S.pots.find(p=>p.id===id);if(!p)return;
+  p[f]=v===''?null:(['until','baseYM'].includes(f)?v:parseFloat(v)); 
+  if(f==='baseAmt'&&v==='')p.baseAmt=null;
+  p.manual=true;save();renderPots();renderKpis()}
+function potDel(id){
+  const p=S.pots.find(p=>p.id===id);if(!p)return;
+  if(!confirm('Topf löschen? Er wird auch bei künftigen Importen nicht wieder angelegt.'))return;
+  S.hidden=[...(S.hidden||[]),p.key];
+  S.pots=S.pots.filter(x=>x.id!==id);save();render();
+}
+function potMonth(id,m){
+  const p=S.pots.find(p=>p.id===id);if(!p)return;
+  const ms=Array.isArray(p.months)?[...p.months]:[];
+  const i=ms.indexOf(m); if(i>=0)ms.splice(i,1); else ms.push(m);
+  p.months=ms.sort((a,b)=>a-b);p.manual=true;save();renderPots();
+}
+function potGroup(id,g){const p=S.pots.find(p=>p.id===id);if(p){p.group=g;p.manual=true;save();renderPots()}}
+
+function renderAssign(){
+  const box=document.getElementById('asB');
+  const open=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t));
+  if(!open.length){box.innerHTML='<div class="empty">Alles zugeordnet. Neue Auszüge laufen automatisch nach dem, was du hier gelernt hast.</div>';return}
+  const g={};
+  for(const t of open){
+    const k=learnable(t.merchant)?mkey(t.merchant):'solo::'+t.id;
+    if(!g[k])g[k]={name:t.merchant,n:0,sum:0,ids:[],solo:!learnable(t.merchant),date:t.date,acc:t.acc};
+    g[k].n++;g[k].sum+=Math.abs(t.amt);g[k].ids.push(t.id);
+  }
+  box.innerHTML=Object.values(g).sort((a,b)=>b.sum-a.sum).map(x=>`
+    <div class="as"><div class="t">
+      <span class="m">${esc(x.name)}</span><span class="acc">${esc(acc(x.acc).name)}</span>
+      <span class="mt">${x.solo?dmy(x.date)+' · ':''}${x.n}× · ${eur(x.sum)}</span></div>
+      ${x.solo?'<div class="ex">Einzelfall — die Bank nennt keinen Empfänger, die Wahl wird nicht übertragen.</div>':''}
+      <div class="chips">${S.cats.map(c=>c.subs.map(s=>
+        `<button class="chip" style="border-color:${c.color}44;color:${c.color}" title="${esc(c.name)}" onclick="setCat('${x.ids[0]}','${c.id}|${s.id}')">${esc(s.name)}</button>`
+      ).join('')).join('')}
+      <button class="chip" onclick="ignore('${x.ids.join(',')}')">ignorieren</button></div></div>`).join('');
+}
+function ignore(ids){ids.split(',').forEach(i=>{const t=S.tx.find(x=>x.id===i);if(t)t.ign=true});save();render();toast('Ignoriert')}
+
+function renderCatEd(){
+  document.getElementById('lCt').textContent=`${Object.keys(S.learn).length} gelernt`;
+  const mn=document.getElementById('meName'),ma=document.getElementById('meAddr');
+  if(document.activeElement!==mn)mn.value=S.me.name||'';
+  if(document.activeElement!==ma)ma.value=S.me.addr||'';
+  document.getElementById('catB').innerHTML=S.cats.map(c=>`
+    <div class="ce"><div class="ceh">
+      <span class="sw" style="background:${c.color}"></span>
+      <input value="${esc(c.name)}" onchange="cName('${c.id}',this.value)">
+      <button class="bare sm" style="margin-left:auto" onclick="subAdd('${c.id}')">+ Unterkategorie</button>
+      <button class="bare sm" onclick="cDel('${c.id}')">✕</button></div>
+      <div class="ceb">${c.subs.map(s=>`
+        <div class="ser">
+          <input class="sn" value="${esc(s.name)}" onchange="sName('${c.id}','${s.id}',this.value)">
+          <select onchange="sGoal('${c.id}','${s.id}',this.value)">
+            <option value="need"${s.goal==='need'?' selected':''}>Need</option>
+            <option value="want"${s.goal==='want'?' selected':''}>Want</option>
+            <option value="save"${s.goal==='save'?' selected':''}>Save</option></select>
+          <input class="kw" value="${esc((s.kw||[]).join(', '))}" placeholder="Stichwörter" onchange="sKw('${c.id}','${s.id}',this.value)">
+          <button class="bare sm" onclick="sDel('${c.id}','${s.id}')">✕</button>
+        </div>`).join('')}</div></div>`).join('');
+  const f=document.getElementById('fCat'),v=f.value;
+  f.innerHTML='<option value="">Alle Kategorien</option>'+S.cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')+'<option value="_">Ohne Kategorie</option>';
+  f.value=v;
+}
+function cName(id,v){const c=cat(id);if(c&&v.trim()){c.name=v.trim();save();render()}}
+function cDel(id){if(!confirm('Kategorie samt Unterkategorien löschen?'))return;
+  S.cats=S.cats.filter(c=>c.id!==id);
+  S.tx.forEach(t=>{if(t.cat===id){t.cat='';t.sub='';t.manual=false}});
+  Object.keys(S.learn).forEach(k=>{if(S.learn[k].cat===id)delete S.learn[k]});save();render()}
+function subAdd(cid){const c=cat(cid);if(!c)return;c.subs.push({id:uid(),name:'Neu',goal:'want',kw:[]});save();renderCatEd()}
+function sName(c,s,v){const x=sub(c,s);if(x&&v.trim()){x.name=v.trim();save();render()}}
+function sGoal(c,s,v){const x=sub(c,s);if(x){x.goal=v;save();render()}}
+function sKw(c,s,v){const x=sub(c,s);if(x){x.kw=v.split(',').map(y=>y.trim()).filter(Boolean);save()}}
+function sDel(c,s){const x=cat(c);if(!x)return;x.subs=x.subs.filter(y=>y.id!==s);
+  S.tx.forEach(t=>{if(t.cat===c&&t.sub===s){t.sub=''}});save();render()}
+
+/* ============ Forecast ============ */
+// kind: m = monatlich, y = jährlich (Monat 1-12), 1 = einmalig (an einem Monat)
+function fcRows(){
+  const f=S.fc, from=f.from||nowYM();
+  let bal=f.start||0;
+  const potSum=S.pots.reduce((s,p)=>s+potRate(p),0);
+  const out=[];
+  for(let i=0;i<12;i++){
+    const ym=addM(from,i),m=+ym.split('-')[1];
+    let inc=0,exp=potSum+(f.base||0);
+    const why=[];
+    for(const e of f.events||[]){
+      let hit=false;
+      if(e.kind==='m')hit=(!e.from||ym>=e.from)&&(!e.to||ym<=e.to);
+      else if(e.kind==='y')hit=(m===e.month)&&(!e.from||ym>=e.from);
+      else hit=(e.at===ym);
+      if(!hit)continue;
+      if(e.amt>=0)inc+=e.amt;else exp+=-e.amt;
+      why.push(e.name);
+    }
+    bal+=inc-exp;
+    out.push({ym,inc,exp,bal,why});
+  }
+  return out;
+}
+function renderFc(){
+  const f=S.fc;
+  // Beim ersten Öffnen mit dem bekannten Girokontostand starten
+  if(!f.from){f.from=nowYM();
+    const b=S.bal&&S.bal.vb;if(b&&!f.start)f.start=b.amt;}
+  const g=i=>document.getElementById(i);
+  if(document.activeElement!==g('fcStart'))g('fcStart').value=f.start??'';
+  if(document.activeElement!==g('fcFrom'))g('fcFrom').value=f.from||nowYM();
+  if(document.activeElement!==g('fcBase'))g('fcBase').value=f.base??'';
+  const rows=fcRows(),low=rows.reduce((a,b)=>b.bal<a.bal?b:a,rows[0]);
+  g('fcHint').textContent=low&&low.bal<0?`Tiefpunkt ${eur(low.bal)} in ${mLabel(low.ym)}`
+    :low?`Tiefpunkt ${eur(low.bal)} in ${mLabel(low.ym)}`:'';
+  g('fcB').innerHTML=rows.map(r=>`<tr>
+    <td class="dt">${mLabel(r.ym)}</td>
+    <td class="am p">${r.inc?eur(r.inc):'—'}</td>
+    <td class="am n">${eur(r.exp)}</td>
+    <td class="am ${r.inc-r.exp>=0?'p':'n'}">${eur(r.inc-r.exp)}</td>
+    <td class="am" style="color:${r.bal<0?'var(--alert)':r.bal<500?'var(--out)':'var(--in)'};font-weight:600">${eur(r.bal)}</td>
+    <td class="ds" style="font-size:11px;color:var(--dim)">${esc(r.why.join(', '))}</td></tr>`).join('');
+  g('fcEv').innerHTML=(f.events||[]).length?f.events.map(e=>`
+    <div style="display:flex;gap:5px;align-items:center;padding:4px 0;border-bottom:1px solid var(--soft);flex-wrap:wrap">
+      <input value="${esc(e.name)}" style="flex:1;min-width:110px;padding:3px 6px;font-size:11px" onchange="fcSet('${e.id}','name',this.value)">
+      <input type="number" value="${e.amt}" step="0.01" style="width:88px;padding:3px 6px;font-size:11px" onchange="fcSet('${e.id}','amt',this.value)">
+      <select style="font-size:11px;padding:3px 5px" onchange="fcSet('${e.id}','kind',this.value)">
+        <option value="m"${e.kind==='m'?' selected':''}>monatlich</option>
+        <option value="y"${e.kind==='y'?' selected':''}>jährlich</option>
+        <option value="1"${e.kind==='1'?' selected':''}>einmalig</option></select>
+      ${e.kind==='1'?`<input type="month" value="${e.at||''}" style="width:112px;padding:3px 6px;font-size:11px" onchange="fcSet('${e.id}','at',this.value)">`
+        :e.kind==='y'?`<select style="font-size:11px;padding:3px 5px" onchange="fcSet('${e.id}','month',this.value)">
+            ${MON.map((m,i)=>`<option value="${i+1}"${e.month===i+1?' selected':''}>${m}</option>`).join('')}</select>`
+        :`<input type="month" value="${e.from||''}" title="ab" style="width:104px;padding:3px 6px;font-size:11px" onchange="fcSet('${e.id}','from',this.value)">
+          <input type="month" value="${e.to||''}" title="bis" style="width:104px;padding:3px 6px;font-size:11px" onchange="fcSet('${e.id}','to',this.value)">`}
+      <button class="bare sm" onclick="fcDel('${e.id}')">✕</button>
+    </div>`).join('')
+    :'<div class="empty">Noch keine Posten. Gehalt, Sonderzahlungen und feste Ausgaben hier eintragen.</div>';
+}
+function fcSet(id,f,v){
+  const e=S.fc.events.find(x=>x.id===id);if(!e)return;
+  e[f]=['name','at','from','to','kind'].includes(f)?v:(f==='month'?parseInt(v,10):parseFloat(v)||0);
+  if(f==='to'&&v==='')e.to=null;
+  save();renderFc();
+}
+function fcDel(id){S.fc.events=S.fc.events.filter(x=>x.id!==id);save();renderFc()}
+
+/* ============ Import ============ */
+const veil=document.getElementById('veil'),drop=document.getElementById('drop'),fPdf=document.getElementById('fPdf');
+document.getElementById('bImport').onclick=()=>veil.classList.add('on');
+document.getElementById('bClose').onclick=()=>veil.classList.remove('on');
+veil.onclick=e=>{if(e.target===veil)veil.classList.remove('on')};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')veil.classList.remove('on')});
+drop.onclick=()=>fPdf.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');handleFiles(e.dataTransfer.files)};
+fPdf.onchange=()=>handleFiles(fPdf.files);
+
+function parseSource(raw){
+  if(/"?Buchungsbetrag"?\s*,/.test(raw.slice(0,2000))&&/Buchungstext/.test(raw.slice(0,2000))){
+    const l=parseCSV(raw);
+    if(l.length)return{f:'willbe-CSV',acc:'wb',list:l};
+  }
+  return parseAny(raw.split('\n'));
+}
+function parseAny(lines){
+  const f=detectFormat(lines);
+  if(f==='vb'){const l=parseVB(lines);return{f,acc:'vb',list:l,balance:l.balance}}
+  if(f==='n26'){const l=parseN26(lines);return{f,acc:'n26',list:l,balance:l.balance}}
+  if(f==='wb'){const l=parseWB(lines);return{f,acc:'wb',list:l,balance:l.balance}}
+  return{f:null,list:[]};
+}
+// Jüngster bekannter Kontostand je Konto, aus den Auszügen übernommen.
+function noteBalance(accId,b){
+  if(!b)return;
+  if(!S.bal[accId]||b.date>=S.bal[accId].date)S.bal[accId]={date:b.date,amt:b.amt};
+}
+async function readPdf(file){
+  const pdf=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;
+  const out=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const it=(await(await pdf.getPage(p)).getTextContent()).items
+      .map(i=>({x:i.transform[4],y:i.transform[5],t:i.str})).filter(i=>i.t.trim());
+    it.sort((a,b)=>b.y-a.y||a.x-b.x);
+    const rows=[];
+    for(const i of it){let r=rows.find(r=>Math.abs(r.y-i.y)<2.5);if(!r){r={y:i.y,items:[]};rows.push(r)}r.items.push(i)}
+    for(const r of rows){const l=r.items.sort((a,b)=>a.x-b.x).map(i=>i.t).join(' ');if(l.trim())out.push(l)}
+  }
+  return out;
+}
+function merge(list){
+  const sig=t=>`${t.acc}|${t.date}|${squash(t.merchant)}|${t.amt}`;
+  const seen=new Set(S.tx.map(sig));
+  let add=0,skip=0;
+  for(const t of list){
+    const k=sig(t);
+    if(seen.has(k)){skip++;continue}
+    seen.add(k);S.tx.push(t);add++;
+  }
+  return{add,skip};
+}
+async function handleFiles(fl){
+  const files=[...fl].filter(f=>/\.(pdf|csv)$/i.test(f.name)||f.type==='application/pdf'||/csv/i.test(f.type));
+  if(!files.length){stat('Keine PDF- oder CSV-Datei erkannt','err');return}
+  let all=[],kinds=new Set(),bad=[];
+  for(const f of files){
+    stat(`Lese ${f.name} …`);
+    try{
+      const csv=/\.csv$/i.test(f.name)||/csv/i.test(f.type);
+      const {f:fmt,acc:a,list,balance}=csv?parseSource(await f.text()):parseAny(await readPdf(f));
+      if(!fmt||!list.length){bad.push(f.name);continue}
+      noteBalance(a||'wb',balance);
+      kinds.add(fmt);all=all.concat(list);
+    }catch(err){stat(`Fehler in ${f.name}: ${err.message}`,'err');return}
+  }
+  if(!all.length){stat(`Kein bekanntes Format erkannt${bad.length?': '+bad.join(', '):''}`,'err');return}
+  const{add,skip}=merge(all);
+  save();render();veil.classList.remove('on');fPdf.value='';
+  stat(`${add} importiert (${[...kinds].join(', ')})${skip?`, ${skip} Duplikate`:''}${bad.length?`, ${bad.length} unerkannt`:''}`,'ok');
+  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
+  if(o)toast(`${o} Buchungen ohne Kategorie — Tab „Zuordnen"`);
+}
+document.getElementById('bPaste').onclick=()=>{
+  const{f,acc:a,list,balance}=parseSource(document.getElementById('paste').value);
+  if(!list.length){stat('Kein bekanntes Format erkannt','err');return}
+  noteBalance(a||'wb',balance);
+  const{add,skip}=merge(list);
+  save();render();veil.classList.remove('on');document.getElementById('paste').value='';
+  stat(`${add} übernommen (${f})${skip?`, ${skip} Duplikate`:''}`,'ok');
+};
+
+/* ============ Sonstiges ============ */
+document.getElementById('bAdd').onclick=()=>{
+  const d=prompt('Datum (TT.MM.JJJJ)');if(!d)return;
+  const m=d.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);if(!m){toast('Format TT.MM.JJJJ');return}
+  const w=prompt('Beschreibung');if(!w)return;
+  const a=prompt('Betrag € (negativ = Ausgabe)');if(a===null)return;
+  const v=parseFloat(String(a).replace(/\./g,'').replace(',','.'));
+  if(!isFinite(v)){toast('Betrag nicht lesbar');return}
+  const ac=prompt('Konto: vb / n26 / wb','vb')||'vb';
+  S.tx.push(mk(ACCOUNTS.some(x=>x.id===ac)?ac:'vb',`${m[3]}-${m[2]}-${m[1]}`,w.trim(),'',v,w));
+  save();render();toast('Hinzugefügt');
+};
+document.getElementById('bCsv').onclick=()=>{
+  const r=filtered();if(!r.length){toast('Nichts zu exportieren');return}
+  const h='Datum;Konto;Beschreibung;Zweck;Kategorie;Unterkategorie;Ziel;Betrag;Umbuchung;Verauslagt\n';
+  const b=r.map(t=>{const c=cat(t.cat),s=sub(t.cat,t.sub);
+    return[dmy(t.date),acc(t.acc).name,t.merchant.replace(/;/g,','),t.note.replace(/;/g,','),
+      c?c.name:'',s?s.name:'',s?s.goal:'',t.amt.toFixed(2).replace('.',','),
+      isTransfer(t)?'ja':'nein',t.biz?'ja':'nein'].join(';')}).join('\n');
+  dl(new Blob(['\ufeff'+h+b],{type:'text/csv;charset=utf-8;'}),'kontobuch.csv');
+};
+document.getElementById('bExp').onclick=()=>dl(new Blob([JSON.stringify(S,null,1)],{type:'application/json'}),'kontobuch-sicherung.json');
+document.getElementById('bImp').onclick=()=>document.getElementById('fJson').click();
+document.getElementById('fJson').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{const p=JSON.parse(await f.text());
+    if(!p.tx)throw new Error('Keine Buchungen enthalten');
+    S=Object.assign({me:{name:'',addr:''},hidden:[],fc:{start:0,from:null,base:0,events:[]},tx:[],cats:JSON.parse(JSON.stringify(CATS)),learn:{},pots:[],open:{},bal:{},goals:{need:50,want:30,save:20}},p);
+    save();render();stat('Sicherung geladen','ok');
+  }catch(err){stat('Datei nicht lesbar: '+err.message,'err')}
+  e.target.value='';
+};
+function dl(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href)}
+document.getElementById('bCat').onclick=()=>{
+  const e=document.getElementById('nCat'),n=e.value.trim();if(!n)return;
+  S.cats.push({id:uid(),name:n,color:PAL[S.cats.length%PAL.length],subs:[{id:uid(),name:'Allgemein',goal:'want',kw:[]}]});
+  e.value='';save();render();
+};
+document.getElementById('bPot').onclick=()=>{
+  const n=document.getElementById('pName'),t=document.getElementById('pTarget');
+  if(!n.value.trim())return;
+  const u=document.getElementById('pUntil');
+  S.pots.push({id:uid(),key:'m'+mkey(n.value),name:n.value.trim(),rate:0,
+               target:parseFloat(t.value)||null,until:u.value||null,start:0,manual:true,
+               group:guessGroup(n.value,0),inSum:0,n:0,last:''});
+  n.value='';t.value='';u.value='';save();render();
+};
+document.getElementById('bForget').onclick=()=>{
+  if(!confirm('Alle gelernten Zuordnungen vergessen? Bestehende Buchungen behalten ihre Kategorie.'))return;
+  S.learn={};save();render();toast('Zurückgesetzt');
+};
+document.getElementById('nav').onclick=e=>{
+  const b=e.target.closest('button[data-v]');if(!b)return;
+  [...document.querySelectorAll('#nav button')].forEach(x=>x.classList.toggle('on',x===b));
+  ['dash','tx','pots','assign','fc','cats'].forEach(v=>document.getElementById('v-'+v).classList.toggle('on',v===b.dataset.v));
+};
+document.getElementById('meName').onchange=e=>{S.me.name=e.target.value.trim();save()};
+document.getElementById('meAddr').onchange=e=>{S.me.addr=e.target.value.trim();save()};
+document.getElementById('fcStart').onchange=e=>{S.fc.start=parseFloat(e.target.value)||0;save();renderFc()};
+document.getElementById('fcFrom').onchange=e=>{S.fc.from=e.target.value;save();renderFc()};
+document.getElementById('fcBase').onchange=e=>{S.fc.base=parseFloat(e.target.value)||0;save();renderFc()};
+document.getElementById('fcAdd').onclick=()=>{
+  S.fc.events.push({id:uid(),name:'Neuer Posten',amt:0,kind:'m',from:nowYM(),to:null,month:1,at:nowYM()});
+  save();renderFc();
+};
+document.getElementById('fcAuto').onclick=()=>{
+  // Ø Ausgaben aus der Historie, ohne die bereits separat erfassten Rücklagenraten
+  const ms=rangeMonths();if(!ms.length){toast('Noch keine Daten');return}
+  const a=agg(txIn(ms),ms);
+  S.fc.base=Math.round(a.avgOut*100)/100;save();renderFc();toast('Übernommen: Ø '+eur(S.fc.base));
+};
+document.getElementById('range').onchange=render;
+document.getElementById('scope').onchange=render;
+document.getElementById('fCat').onchange=renderTable;
+document.getElementById('fType').onchange=renderTable;
+
+/* ============ Start ============ */
+const PDF_OK=typeof pdfjsLib!=='undefined';
+if(PDF_OK){try{pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}catch(e){}}
+(async function(){
+  try{await load()}catch(e){}
+  render();
+  if(!PDF_OK){drop.style.display='none';document.getElementById('pdfWarn').style.display='block'}
+  if(!S.tx.length)veil.classList.add('on');
+})();
+</script>
+</body>
+</html>
