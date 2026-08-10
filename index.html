@@ -63,6 +63,11 @@
   .view.on{display:block}
   .g2{display:grid;grid-template-columns:1.4fr 1fr;gap:10px;height:100%;min-height:0}
   .col{display:flex;flex-direction:column;gap:10px;min-height:0}
+  .dash{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0}
+  .dash .verlauf-panel{flex:0 0 250px;min-height:0}
+  .dash .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .dash .row2.grow{flex:1;min-height:0}
+  .dash .row2.fix{flex:0 0 auto}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0}
   .panel>.h{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--soft);flex-shrink:0}
   .panel>.h .micro{color:var(--mid)}
@@ -208,12 +213,16 @@
     <div class="right">
       <span id="stat"></span>
       <select id="scope" title="Welche Konten"></select>
-      <select id="range" title="Zeitraum">
+      <select id="rangePreset" title="Zeitraum">
         <option value="3">3 Monate</option>
         <option value="6">6 Monate</option>
         <option value="12" selected>12 Monate</option>
         <option value="0">Alles</option>
+        <option value="custom">Eigener Zeitraum</option>
       </select>
+      <input type="month" id="rangeFrom" style="width:112px;display:none" title="Von">
+      <span id="rangeSep" class="micro" style="display:none">–</span>
+      <input type="month" id="rangeTo" style="width:112px;display:none" title="Bis">
       <button class="accent" id="bImport">Auszug laden</button>
     </div>
   </header>
@@ -227,12 +236,22 @@
 
   <main>
     <section class="view on" id="v-dash">
-      <div class="g2">
-        <div class="panel">
-          <div class="h"><span class="micro">Ausgaben nach Kategorie</span><span class="micro r" id="cHint"></span></div>
-          <div class="b" id="cats"></div>
+      <div class="dash">
+        <div class="panel verlauf-panel">
+          <div class="h"><span class="micro">Verlauf</span><span class="micro r"><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--in)"></i> ein &nbsp; <i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--out)"></i> aus</span></div>
+          <div class="b"><div class="months" id="months"></div></div>
         </div>
-        <div class="col">
+        <div class="row2 grow">
+          <div class="panel">
+            <div class="h"><span class="micro">Ausgaben nach Kategorie</span><span class="micro r" id="cHint"></span></div>
+            <div class="b" id="cats"></div>
+          </div>
+          <div class="panel">
+            <div class="h"><span class="micro">Einnahmen nach Kategorie</span><span class="micro r" id="cInHint"></span></div>
+            <div class="b" id="catsIn"></div>
+          </div>
+        </div>
+        <div class="row2 fix">
           <div class="panel fix">
             <div class="h"><span class="micro">Zielerreichung</span><span class="micro r" id="gHint"></span></div>
             <div class="b" id="goals"></div>
@@ -240,10 +259,6 @@
           <div class="panel fix">
             <div class="h"><span class="micro">Stärkste Veränderungen</span><span class="micro r" id="mHint"></span></div>
             <div class="b" id="movers"></div>
-          </div>
-          <div class="panel">
-            <div class="h"><span class="micro">Verlauf</span><span class="micro r"><i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--in)"></i> ein &nbsp; <i style="display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--out)"></i> aus</span></div>
-            <div class="b"><div class="months" id="months"></div></div>
           </div>
         </div>
       </div>
@@ -909,10 +924,28 @@ function wbBalance(){
 function monthsAll(){return [...new Set(S.tx.map(t=>t.date.slice(0,7)))].sort()}
 function rangeMonths(){
   const all=monthsAll();if(!all.length)return[];
-  const n=+document.getElementById('range').value;
+  const preset=document.getElementById('rangePreset').value;
+  if(preset==='custom'){
+    const from=document.getElementById('rangeFrom').value,to=document.getElementById('rangeTo').value;
+    if(!from||!to)return all;
+    let a=from,b=to;if(a>b)[a,b]=[b,a];
+    const out=[];let cur=a;while(cur<=b&&out.length<600){out.push(cur);cur=addM(cur,1)}
+    return out;
+  }
+  const n=+preset;
   return n>0?all.slice(-n):all;
 }
 function scopeVal(){return document.getElementById('scope').value}
+// Sichtbarkeit in der Buchungen-Tabelle: richtet sich nur nach dem Konto, nicht
+// nach der Verauslagt-Markierung — die Buchung bleibt auf ihrem Konto sichtbar.
+function acctInScope(t){
+  const s=scopeVal(),k=acc(t.acc).kind;
+  if(s==='privat')return k!=='geschaeft';
+  if(s==='geschaeft')return k==='geschaeft'||t.biz;
+  return true;
+}
+// Zählt für Auswertungen/Summen: verauslagte Buchungen fallen im Privat-Scope raus,
+// zählen aber weiterhin bei Geschäftlich.
 function inScope(t){
   const s=scopeVal(),k=acc(t.acc).kind;
   if(s==='privat')return k!=='geschaeft'&&!t.biz;
@@ -929,10 +962,13 @@ function agg(list,months){
   const inc=flow.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0);
   const exp=flow.filter(t=>t.amt<0).reduce((s,t)=>s+Math.abs(t.amt),0);
   const sav=list.filter(isSaving).reduce((s,t)=>s+t.amt,0);
-  const byCat={},bySub={};
+  const byCat={},bySub={},byCatIn={},bySubIn={};
   for(const t of flow)if(t.amt<0){
     const c=t.cat||'_';byCat[c]=(byCat[c]||0)+Math.abs(t.amt);
     const k=c+'|'+(t.sub||'_');bySub[k]=(bySub[k]||0)+Math.abs(t.amt);
+  }else if(t.amt>0){
+    const c=t.cat||'_';byCatIn[c]=(byCatIn[c]||0)+t.amt;
+    const k=c+'|'+(t.sub||'_');bySubIn[k]=(bySubIn[k]||0)+t.amt;
   }
   // 50/30/20: Sparen = Zuflüsse aufs Rücklagenkonto + Ausgaben in Spar-Unterkategorien
   let need=0,want=0,save_=sav;
@@ -940,14 +976,14 @@ function agg(list,months){
     const s=sub(t.cat,t.sub),g=s?s.goal:'need';
     if(g==='need')need+=Math.abs(t.amt);else if(g==='want')want+=Math.abs(t.amt);else save_+=Math.abs(t.amt);
   }
-  return{n,inc,exp,sav,byCat,bySub,need,want,save:save_,
+  return{n,inc,exp,sav,byCat,bySub,byCatIn,bySubIn,need,want,save:save_,
          avgIn:inc/n,avgOut:exp/n,avgBal:(inc-exp)/n};
 }
 
 /* ============ Rendering ============ */
 function render(){
   linkTransfers();derivePots();
-  renderScope();renderKpis();renderCats();renderGoals();renderMovers();renderMonths();
+  renderScope();renderKpis();renderCats();renderCatsIn();renderGoals();renderMovers();renderMonths();
   renderTable();renderPots();renderAssign();renderFc();renderCatEd();
   const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
   const b=document.getElementById('bOpen');b.textContent=o;b.classList.toggle('zero',!o);
@@ -1000,6 +1036,37 @@ function renderCats(){
   }).join('');
 }
 function tog(k){S.open[k]=!S.open[k];save();renderCats()}
+function renderCatsIn(){
+  const box=document.getElementById('catsIn'),ms=rangeMonths(),list=txIn(ms),a=agg(list,ms);
+  document.getElementById('cInHint').textContent=a.inc?`Ø ${eur(a.avgIn)} / Monat`:'';
+  const rows=Object.entries(a.byCatIn).sort((x,y)=>y[1]-x[1]);
+  if(!rows.length){box.innerHTML='<div class="empty">Keine Einnahmen im Zeitraum.</div>';return}
+  const max=rows[0][1];
+  box.innerHTML=rows.map(([cid,val])=>{
+    const c=cid==='_'?{id:'_',name:'Ohne Kategorie',color:'#4A5162',subs:[]}:(cat(cid)||{id:cid,name:cid,color:'#4A5162',subs:[]});
+    const share=a.inc?val/a.inc*100:0,ok='i:'+cid,open=!!S.open[ok];
+    const subs=Object.entries(a.bySubIn).filter(([k])=>k.startsWith(cid+'|')).sort((x,y)=>y[1]-x[1]);
+    return`<div class="cg ${open?'open':''}">
+      <div class="ch" onclick="togIn('${ok}')">
+        <div class="nm"><span class="caret">›</span><span class="dot" style="background:${c.color}"></span><em>${esc(c.name)}</em></div>
+        <div class="nums">${eur(val/a.n)}<span class="p">${pc(share)}</span></div>
+        <div class="trk"><div class="fill" style="width:${(val/max*100).toFixed(1)}%;background:${c.color}"></div></div>
+      </div>
+      <div class="sub">${subs.map(([k,v])=>{
+        const sid=k.split('|')[1],s=sub(cid,sid),sok='i:'+k,so=!!S.open[sok];
+        const tl=list.filter(t=>t.amt>0&&!isTransfer(t)&&(t.cat||'_')===cid&&(t.sub||'_')===sid)
+                     .sort((x,y)=>y.date.localeCompare(x.date));
+        return`<div class="sr ${so?'open':''}" onclick="togIn('${sok}')">
+            <span class="sn">${esc(s?s.name:'Ohne Unterkategorie')}</span>
+            ${s?`<span class="gl ${s.goal}">${s.goal==='need'?'Need':s.goal==='want'?'Want':'Save'}</span>`:''}
+            <span class="sv">${eur(v/a.n)}</span></div>
+          <div class="txl">${tl.slice(0,40).map(t=>
+            `<div class="tl"><span>${dmy(t.date)}</span><span class="td">${esc(t.merchant)}</span><span>${eur(t.amt)}</span></div>`
+          ).join('')}${tl.length>40?`<div class="tl"><span class="td">… ${tl.length-40} weitere</span></div>`:''}</div>`;
+      }).join('')}</div></div>`;
+  }).join('');
+}
+function togIn(k){S.open[k]=!S.open[k];save();renderCatsIn()}
 function renderGoals(){
   const ms=rangeMonths(),a=agg(txIn(ms),ms);
   const base=a.inc;
@@ -1022,7 +1089,7 @@ function renderGoals(){
 }
 function renderMovers(){
   const all=monthsAll(),box=document.getElementById('movers');
-  const n=+document.getElementById('range').value||Math.ceil(all.length/2);
+  const n=rangeMonths().length||Math.ceil(all.length/2);
   const half=Math.max(1,Math.min(n,Math.floor(all.length/2)));
   if(all.length<2){box.innerHTML='<div class="empty">Ab zwei Monaten vergleichbar.</div>';document.getElementById('mHint').textContent='';return}
   const cur=all.slice(-half),prev=all.slice(-2*half,-half);
@@ -1068,7 +1135,7 @@ function filtered(){
   const fc=document.getElementById('fCat').value,ft=document.getElementById('fType').value;
   return S.tx.filter(t=>{
     if(!ms.has(t.date.slice(0,7)))return false;
-    if(!inScope(t))return false;
+    if(!acctInScope(t))return false;
     if(fc==='_'){if(t.cat)return false}else if(fc&&t.cat!==fc)return false;
     if(ft==='out'&&(t.amt>=0||!inFlow(t)))return false;
     if(ft==='in'&&(t.amt<0||!inFlow(t)))return false;
@@ -1082,7 +1149,7 @@ function renderTable(){
   const r=filtered();
   document.getElementById('txCt').textContent=`${r.length} Buchungen`;
   document.getElementById('txB').innerHTML=r.length?r.map(t=>`
-    <tr class="${t.ign||isTransfer(t)?'mut':''}">
+    <tr class="${t.ign||isTransfer(t)||(t.biz&&scopeVal()==='privat')?'mut':''}">
       <td class="dt">${dmy(t.date)}</td>
       <td class="ds" title="${esc(t.merchant)}${t.note?' · '+esc(t.note):''}">${esc(t.merchant)}${t.note?` <small>· ${esc(t.note)}</small>`:''}</td>
       <td><span class="acc">${esc(acc(t.acc).name)}</span></td>
@@ -1549,7 +1616,17 @@ document.getElementById('fcAuto').onclick=()=>{
   const a=agg(txIn(ms),ms);
   S.fc.base=Math.round(a.avgOut*100)/100;save();renderFc();toast('Übernommen: Ø '+eur(S.fc.base));
 };
-document.getElementById('range').onchange=render;
+document.getElementById('rangePreset').onchange=e=>{
+  const custom=e.target.value==='custom';
+  ['rangeFrom','rangeSep','rangeTo'].forEach(id=>document.getElementById(id).style.display=custom?'':'none');
+  if(custom){
+    const from=document.getElementById('rangeFrom'),to=document.getElementById('rangeTo'),all=monthsAll();
+    if(all.length){from.value=from.value||all[0];to.value=to.value||all[all.length-1]}
+  }
+  render();
+};
+document.getElementById('rangeFrom').onchange=render;
+document.getElementById('rangeTo').onchange=render;
 document.getElementById('scope').onchange=render;
 document.getElementById('fCat').onchange=renderTable;
 document.getElementById('fType').onchange=renderTable;
