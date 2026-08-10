@@ -432,10 +432,11 @@ const CATS=[
    {id:'cafe',name:'Café',goal:'want',kw:['STARBUCKS','CAFE','COFFEE']},
    {id:'liefer',name:'Lieferdienst',goal:'want',kw:['LIEFERANDO','UBER EATS','WOLT']}]},
  {id:'transport',name:'Transport',color:'#5FB88A',subs:[
-   {id:'tanken',name:'Tanken',goal:'need',kw:['TANKSTELLE','ARAL','SHELL','ESSO','STAR TANK','TOTAL']},
+   {id:'tanken',name:'Tanken',goal:'need',kw:['TANKSTELLE','ARAL','SHELL','ESSO','STAR TANK','STAR ','TOTAL']},
    {id:'oepnv',name:'Bahn & ÖPNV',goal:'need',kw:['DB VERTRIEB','BAHNCARD','FLIXBUS','VRR','BVG','RUHRBAHN']},
    {id:'auto',name:'Auto',goal:'need',kw:['ADAC','WERKSTATT','TUEV','KFZ']},
-   {id:'parken',name:'Parken',goal:'need',kw:['PARKHAUS','PARKEN','APCOA']}]},
+   {id:'parken',name:'Parken',goal:'need',kw:['PARKHAUS','PARKEN','APCOA','Q PARK','Q-PARK']},
+   {id:'unterwegs',name:'Unterwegs',goal:'need',kw:[]}]},
  {id:'wohnen',name:'Wohnen',color:'#8B7BD8',subs:[
    {id:'miete',name:'Miete',goal:'need',kw:['MIETE','KALTMIETE']},
    {id:'energie',name:'Energie',goal:'need',kw:['STADTWERKE','STROM','GAS','WASSER','ENERGIE']},
@@ -463,22 +464,23 @@ const CATS=[
    {id:'verein',name:'Verein',goal:'want',kw:['MITGLIEDSBEITRAG','MANNSCHAFTSKASSE','TBO','BAYER04']},
    {id:'ausruestung',name:'Ausrüstung',goal:'want',kw:['DECATHLON','SPORTSCHECK']}]},
  {id:'versicherung',name:'Versicherung',color:'#C08AB0',subs:[
-   {id:'kranken',name:'Kranken',goal:'need',kw:['DEBEKA','BKK','AOK','TK ','BARMER','EY BKK']},
+   {id:'kranken',name:'Kranken',goal:'need',kw:['BKK','AOK','TK ','BARMER','EY BKK']},
    {id:'leben',name:'Leben & BU',goal:'need',kw:['ALTE LEIPZIGER','LEBENSVERSICHERUNG','BERUFSUNFAEHIG']},
-   {id:'unfall',name:'Unfall',goal:'need',kw:['UNFALL']},
+   {id:'unfall',name:'Unfall',goal:'need',kw:['UNFALL','DEBEKA']},
    {id:'haftpflicht',name:'Haftpflicht',goal:'need',kw:['HAFTPFLICHT','BERUFSHAFTPFLICHT']}]},
  {id:'vorsorge',name:'Vorsorge',color:'#6E8AC4',subs:[
    {id:'depot',name:'ETF & Depot',goal:'save',kw:['SCALABLE','TRADE REPUBLIC','SPARPLAN','DEPOT']},
    {id:'steuer',name:'Steuerrücklage',goal:'save',kw:['STEUER PAUSCHALE','STEUERRUECKLAGE']},
-   {id:'notgroschen',name:'Notgroschen',goal:'save',kw:['NOTGROSCHEN']}]},
+   {id:'notgroschen',name:'Notgroschen',goal:'save',kw:['NOTGROSCHEN']},
+   {id:'ruecklagen',name:'Rücklagen-Überweisung',goal:'save',kw:[]}]},
  {id:'bildung',name:'Bildung',color:'#A8894E',subs:[
    {id:'studium',name:'Studium',goal:'need',kw:['HOCHSCHULE','SEMESTER','STUDIERENDEN']},
    {id:'literatur',name:'Fachliteratur',goal:'want',kw:['THALIA','BUCHHANDL']},
-   {id:'kurse',name:'Kurse',goal:'want',kw:['UDEMY','COURSERA','ASI ']}]},
+   {id:'kurse',name:'Kurse',goal:'want',kw:['UDEMY','COURSERA','ASI SERVICE']}]},
  {id:'geschaeft',name:'Geschäftlich',color:'#9B7FC4',subs:[
    {id:'wareneinsatz',name:'Wareneinsatz',goal:'need',kw:[]},
    {id:'werbung',name:'Werbung',goal:'need',kw:[]},
-   {id:'gebuehren',name:'Gebühren',goal:'need',kw:[]},
+   {id:'gebuehren',name:'Gebühren',goal:'need',kw:['NETLIFY']},
    {id:'fahrt',name:'Fahrtkosten',goal:'need',kw:[]}]},
  {id:'einkommen',name:'Einkommen',color:'#3FBFB0',subs:[
    {id:'gehalt',name:'Gehalt',goal:'need',kw:['LOHN','GEHALT','AIR LIQ']},
@@ -594,6 +596,12 @@ function parseVB(lines){
   return list;
 }
 const NOISE=/\s+(IBAN|EREF|MREF|CRED|BIC|ABWA|Vers-Nr|Auftragsnummer)\s*:/i;
+// Referenz-/Mandatsnummern (z.B. "MREF:RE123456") landen sonst mit im Keyword-Matching
+// und können zufällig ein kurzes Keyword wie "RE1" oder "TK " enthalten — führte zu
+// Fehltreffern (z.B. eine Bäckerei landete wegen einer Referenznummer bei "Kranken").
+function stripRefNoise(s){
+  return String(s||'').replace(/\b(IBAN|EREF|MREF|CRED|BIC|ABWA|Vers-Nr|Auftragsnummer)\s*:?\s*[A-Za-z0-9.\-\/]+/gi,' ');
+}
 function vbMerchant(vg,det){
   const d0=(det[0]||'').trim(),d1=(det[1]||'').trim(),all=det.join(' ');
   if(/^Dauerauftragsbelast/i.test(vg)){
@@ -764,7 +772,7 @@ function mkey(m){return squash(m).slice(0,26)}
 function learnable(m){const k=mkey(m);return k.length>=3&&!/UNBENANNT|UNBEKANNT|^PAYPAL$/.test(k)}
 function suggest(merchant,hay){
   if(learnable(merchant)){const l=S.learn[mkey(merchant)];if(l)return{cat:l.cat,sub:l.sub}}
-  const H=squash(hay||merchant);
+  const H=squash(stripRefNoise(hay||merchant));
   let best=null;
   for(const c of S.cats)for(const s of c.subs)for(const w of (s.kw||[])){
     const W=squash(w);
@@ -807,7 +815,11 @@ const onReserve=t=>acc(t.acc).kind==='ruecklage';
 // Zufluss aufs Rücklagenkonto ist Sparen, nicht Einkommen. Abfluss ist Verwendung,
 // keine neue Ausgabe — die Ausgabe war die monatliche Rate.
 const isSaving=t=>onReserve(t)&&t.amt>0;
-const inFlow=t=>!isTransfer(t)&&!onReserve(t);
+// Manuell als "Rücklagen-Überweisung" kategorisierte Abbuchung (z.B. Volksbank → willbe):
+// zählt bewusst nicht als Ausgabe, sonst würde dieselbe Bewegung doppelt ins Sparen
+// einfließen — einmal hier, einmal schon über isSaving auf der willbe-Seite.
+const isRuecklagenTransfer=t=>t.cat==='vorsorge'&&t.sub==='ruecklagen';
+const inFlow=t=>!isTransfer(t)&&!onReserve(t)&&!isRuecklagenTransfer(t);
 
 /* ============ Töpfe ============ */
 // Aus den Zuflüssen aufs Rücklagenkonto, gruppiert nach Zweck.
@@ -861,6 +873,14 @@ function derivePots(){
     p.inSum=f.inSum;p.n=f.n;p.last=f.last;p.prev=f.prev;
   }
   for(const p of S.pots){if(p.inSum===undefined){p.inSum=0;p.n=0;p.last=''}}
+}
+// Gehört diese Buchung schon zu einem Topf (via derivePots)? Dann braucht sie keine
+// eigene Kategorie — die Kategorie-Auswahl wäre für sie ohnehin wirkungslos, weil
+// Rücklagenkonto-Buchungen nicht in Einnahmen/Ausgaben einfließen (inFlow).
+function potForTx(t){
+  if(acc(t.acc).kind!=='ruecklage'||t.amt<=0||POT_SKIP.test(t.merchant))return null;
+  const k=mkey(t.merchant);if(!k)return null;
+  return S.pots.find(p=>p.key===k)||null;
 }
 // ===== Topf-Rechnung =====
 // Modell: Jahresbetrag + Fälligkeitsmonat eingeben, Rate ergibt sich daraus.
@@ -1002,7 +1022,7 @@ function render(){
   linkTransfers();derivePots();
   renderScope();renderKpis();renderCats();renderCatsIn();renderGoals();renderMovers();renderMonths();renderCoverage();
   renderTable();renderPots();renderAssign();renderFc();renderCatEd();
-  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
+  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)&&!potForTx(t)).length;
   const b=document.getElementById('bOpen');b.textContent=o;b.classList.toggle('zero',!o);
 }
 function renderScope(){
@@ -1192,17 +1212,20 @@ function filtered(){
 function renderTable(){
   const r=filtered();
   document.getElementById('txCt').textContent=`${r.length} Buchungen`;
-  document.getElementById('txB').innerHTML=r.length?r.map(t=>`
+  document.getElementById('txB').innerHTML=r.length?r.map(t=>{
+    const pot=potForTx(t);
+    return`
     <tr class="${t.ign||isTransfer(t)||(t.biz&&scopeVal()==='privat')?'mut':''}">
       <td class="dt">${dmy(t.date)}</td>
       <td class="ds" title="${esc(t.merchant)}${t.note?' · '+esc(t.note):''}">${esc(t.merchant)}${t.note?` <small>· ${esc(t.note)}</small>`:''}</td>
       <td><span class="acc">${esc(acc(t.acc).name)}</span></td>
-      <td>${isTransfer(t)?'<span class="tag tr">UMBUCHUNG</span>':`<select class="pick" onchange="setCat('${t.id}',this.value)">${catOpts(t)}</select>`}</td>
+      <td>${isTransfer(t)?'<span class="tag tr">UMBUCHUNG</span>':pot?`<span class="tag tr" title="Automatisch über Töpfe erkannt, braucht keine Kategorie">→ Topf: ${esc(pot.name)}</span>`:`<select class="pick" onchange="setCat('${t.id}',this.value)">${catOpts(t)}</select>`}</td>
       <td class="am ${t.amt>=0?'p':'n'}">${t.amt>=0?'+':'−'}${eur(Math.abs(t.amt))}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="tag ${t.biz?'on':''}" onclick="tBiz('${t.id}')" title="Geschäftlich verauslagt">GB</button>
         <button class="bare" onclick="delTx('${t.id}')" title="Löschen">✕</button>
-      </td></tr>`).join('')
+      </td></tr>`;
+  }).join('')
     :'<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--dim)">Keine Buchungen in dieser Auswahl.</td></tr>';
 }
 function tBiz(id){const t=S.tx.find(x=>x.id===id);if(t){t.biz=!t.biz;save();render()}}
@@ -1378,7 +1401,7 @@ function potGroup(id,g){const p=S.pots.find(p=>p.id===id);if(p){p.group=g;p.manu
 
 function renderAssign(){
   const box=document.getElementById('asB');
-  const open=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t));
+  const open=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)&&!potForTx(t));
   if(!open.length){box.innerHTML='<div class="empty">Alles zugeordnet. Neue Auszüge laufen automatisch nach dem, was du hier gelernt hast.</div>';return}
   const g={};
   for(const t of open){
@@ -1578,7 +1601,7 @@ async function handleFiles(fl){
   const{add,skip}=merge(all);
   save();render();veil.classList.remove('on');fPdf.value='';
   stat(`${add} importiert (${[...kinds].join(', ')})${skip?`, ${skip} Duplikate`:''}${bad.length?`, ${bad.length} unerkannt`:''}`,'ok');
-  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)).length;
+  const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)&&!potForTx(t)).length;
   if(o)toast(`${o} Buchungen ohne Kategorie — Tab „Zuordnen"`);
 }
 document.getElementById('bPaste').onclick=()=>{
