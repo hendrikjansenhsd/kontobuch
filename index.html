@@ -995,6 +995,22 @@ function derivePots(){
     }
   }
   for(const p of S.pots){if(p.inSum===undefined){p.inSum=0;p.n=0;p.last=''}}
+  ensureGoalPots();
+}
+// Notgroschen/Umzug haben keine eigene Buchungshistorie, aus der sie sich wie die
+// anderen Töpfe automatisch ableiten ließen — reine Sparziele. Einmalig mit den
+// genannten Zielbeträgen anlegen, falls noch keiner in der Gruppe existiert und der
+// Topf nicht bewusst gelöscht wurde.
+const GOAL_DEFAULTS=[
+  {key:'goal-notgroschen',name:'Notgroschen',group:'not',target:10000},
+  {key:'goal-umzug',name:'Umzug',group:'umz',target:5000},
+];
+function ensureGoalPots(){
+  for(const g of GOAL_DEFAULTS){
+    if((S.hidden||[]).includes(g.key))continue;
+    if(S.pots.some(p=>p.group===g.group))continue;
+    S.pots.push({id:uid(),key:g.key,name:g.name,rate:0,target:g.target,until:null,start:0,manual:true,group:g.group});
+  }
 }
 // Gehört diese Buchung schon zu einem Topf (via derivePots)? Dann braucht sie keine
 // eigene Kategorie — die Kategorie-Auswahl wäre für sie ohnehin wirkungslos, weil
