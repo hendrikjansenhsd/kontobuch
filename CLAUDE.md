@@ -40,6 +40,7 @@ optionale Google-Drive-Anbindung zum automatischen Einlesen von Auszügen.
 - `S.bal`: letzter bekannter Kontostand je Konto, aus Auszügen übernommen
 - `S.hidden`: gelöschte Topf-Keys (auch für die Sparziel-Defaults, siehe unten)
 - `S.drive`: `{clientId, folderId, folderName, imported}` — Google-Drive-Verbindung, nur lokal
+- `S.ui`: `{potsFold}` — reine Ansichtszustände, die über Sitzungen erhalten bleiben sollen
 - `ACCOUNTS`: `vb` (privat), `n26` (geschäft), `wb` (ruecklage), `pp` PayPal (privat)
 
 ## Parser (vier Auszugs-Formate + PayPal-Sonderfall)
@@ -84,6 +85,35 @@ Zinsabschlüsse** übrig — die gehören zu keinem Zweck. Weicht der Rest darü
 sind Entnahmen offen; der Hinweistext unter „nicht zugeordnet" benennt das mit Anzahl und
 Betrag, statt pauschal „prüfe die Bestände" zu sagen.
 
+### Konto-Abgleich (Stichtag)
+Weil `setPot` jahrelang defekt war, wurden Entnahmen nie zugeordnet — die Topf-Summe lag
+weit über dem Kontostand, und viele Alt-Entnahmen sind nachträglich nicht mehr zuordenbar.
+Der Abgleich (`alignPlan`/`alignApply`, Panel „Konto abgleichen") löst das über einen
+Stichtag statt über Nacharbeit:
+- Feste Töpfe (`amount` + `months`) bekommen den **Soll-Stand**: `potNeedRate × Monate seit
+  lastDue`, gedeckelt auf `amount` — genau so viel, dass die nächste Abbuchung gedeckt ist.
+- Flexible Töpfe und Sparziele behalten ihren aktuellen Wert.
+- Der **Auffang-Topf** (Notgroschen, sonst Umzug) nimmt die Differenz zum echten
+  Kontostand auf. Danach ist „nicht zugeordnet" exakt 0 €.
+- Töpfe ohne Einzahlung seit über 6 Monaten werden zum **Löschen vorgeschlagen**
+  (`alignStale`), abwählbar per Checkbox. Sparziele nie — die haben von Natur aus keine
+  laufenden Einzahlungen.
+- Bewusst als **Vorschau mit Bestätigung**: der Vorgang überschreibt Bestände und löscht
+  Töpfe. `alignUndo()` hebt die Stichtage wieder auf; gelöschte Töpfe kommen nicht zurück
+  (sie stehen in `S.hidden`).
+
+**`p.baseLock` ist der Schalter, nicht `p.baseYM`.** Das ist entscheidend: `POT_FLEX_DEFAULTS`
+setzt bei der Erstanlage einen `baseAmt`/`baseYM`, der nie als Stichtag gedacht war. Hing
+die Stichtagslogik an `baseYM` allein, verlor z. B. der Physio-Topf beim Update ungefragt
+seine gesamte Einzahlungshistorie und fiel auf den Default-Startwert zurück — im Test
+aufgefallen, bevor es live ging. Nur der Abgleich setzt `baseLock`.
+
+**Nach einem Abgleich müssen Bewegungen vor dem Stichtag überall ausgeblendet werden**
+(`alignYM()` / `afterAlign(t)`): in der Entnahmen-Liste, im „nicht zugeordnet"-Hinweis und
+in der Zins-Zeile. Sonst behauptet die App weiter, es seien Entnahmen offen und die
+Bestände zu hoch, obwohl der Rest exakt 0 € ist — und die Liste füllt sich dauerhaft mit
+Altposten, die niemand mehr zuordnen kann.
+
 - **Feste Töpfe**: Eingabe ist Abbuchungsbetrag + Fälligkeitsmonate (Mehrfachauswahl). Rate = Betrag × Anzahl Termine ÷ 12, vollautomatisch. Bestand = Rate × Monate seit der letzten Abbuchung. Feld „tatsächlich" überschreibt die berechnete Soll-Rate für den Forecast, falls der reale Dauerauftrag noch nicht angepasst wurde — **`potRate()` bevorzugt „tatsächlich" gegenüber der Soll-Formel**, das beim Korrigieren eines Topfs leicht zu übersehen.
 - **Flexible Töpfe**: Rate + Stichtagsbestand (`baseAmt`/`baseYM`). Entnahmen werden manuell zugeordnet (Tab „Rücklagen" → „Entnahmen zuordnen").
 - **Sparziele** (Notgroschen/Umzug): Zielbetrag, optional Zieldatum (`until`) für eine automatisch errechnete Rate. Bei Hendrik bewusst **ohne** `until` — die Rate kommt stattdessen dynamisch aus dem Forecast-Wasserfall (siehe unten), nicht aus der Datums-Formel.
@@ -106,6 +136,19 @@ Forecast-Überschuss (Ein − Aus, funktioniert nur weil Notgroschen/Umzug keine
 Rate haben und den Überschuss so nicht selbst schon wegschmälern) zuerst auf Notgroschen
 bis zum Ziel, dann Umzug, der Rest als Empfehlung Richtung Scalable Capital. Zeigt auch,
 ab welchem Monat beide Ziel-Töpfe voraussichtlich voll sind.
+
+## Rücklagen-Tab: Layout
+- Die Töpfe-Liste (linke Spalte) ist **einklappbar** (`potsFold()`, Zustand in
+  `S.ui.potsFold`, wird mitgespeichert). Eingeklappt bleibt nur ein „Bearbeiten"-Knopf
+  stehen; die rechte Spalte schaltet dann auf zwei Spalten um (`.g2.fold>.col` wird
+  `flex-direction:row`), sodass die Aufteilung die volle Höhe und den meisten Platz bekommt.
+  Wichtig: nur das **direkte** Kind umstellen — `#potTools` ist ebenfalls `.col` und muss
+  weiter untereinander stapeln.
+- Die Aufteilung ist ein **horizontales Balkendiagramm** (`renderBars`), nach Gruppen
+  unterteilt und darin nach Betrag sortiert. Vorher ein Ring — der wurde mit 17 Töpfen
+  unlesbar, weil kleine Posten zu Splittern schrumpfen. Die Balkenlänge bezieht sich auf
+  den **größten Einzelposten**, nicht auf die Gesamtsumme, sonst wären alle kleinen Töpfe
+  unsichtbar; der Anteil am Konto steht zusätzlich als Prozentwert daneben.
 
 ## Dashboard
 - Verlauf-Chart oben, breit; darunter Ausgaben/Einnahmen nach Kategorie nebeneinander;
@@ -177,12 +220,13 @@ Nutzers, nichts davon landet je im Code oder in Commits.
   nicht mehr neu, **solange `S.me.name` in den Einstellungen gesetzt ist** — ist er noch
   da, blockiert er als zweiter Topf mit derselben Rate die eindeutige Betrags-Zuordnung
   der zwecklosen Google-One-Zuflüsse.
-- **Die meisten Entnahmen sind noch keinem Topf zugeordnet.** Solange liegen die
-  Topf-Bestände zu hoch und der „nicht zugeordnet"-Rest ist negativ. Das ist Handarbeit
-  im Rücklagen-Tab und kann nur Hendrik selbst machen — die Automatik deckt nur feste
-  Jahresrechnungen ab. Die plausible Zuordnung der restlichen Entnahmen (Physio, Urlaub,
-  Semesterbeitrag, TBO zum alten Beitrag) wurde einmal analysiert und Hendrik im Chat
-  genannt, bewusst nicht hier festgehalten und nicht automatisch gesetzt.
+- **Alt-Entnahmen zuordnen ist hinfällig, sobald Hendrik das Konto abgleicht** (Stand
+  2026-08-11: er hat sich dafür entschieden, statt die Vergangenheit nachzuarbeiten).
+  Wer künftig neue Entnahmen zuordnet, tut das nur noch für Bewegungen **nach** dem
+  Stichtag; die Automatik deckt dabei nur feste Jahresrechnungen ab.
+- **`S.me.name` muss gesetzt sein**, sonst greift `isMine()` nicht: dann bildet der Import
+  wieder einen Topf mit dem eigenen Namen, und weil der dieselbe Rate wie Google One hat,
+  blockiert er zusätzlich die eindeutige Betrags-Zuordnung der zwecklosen Zuflüsse.
 - **TBO geklärt** (Stand 2026-08-11): Der Beitrag wurde laut Vereins-Mail erhöht. Alt
   57 € × 2/Jahr (= die 9,50 €/Mon. aus der Historie), neu 114 € × 2/Jahr. `POT_DEFAULTS`
   ist damit korrekt; Hendrik muss seinen **Dauerauftrag von 9,50 € auf 19 €** erhöhen.
