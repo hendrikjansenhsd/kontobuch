@@ -90,17 +90,37 @@ Weil `setPot` jahrelang defekt war, wurden Entnahmen nie zugeordnet — die Topf
 weit über dem Kontostand, und viele Alt-Entnahmen sind nachträglich nicht mehr zuordenbar.
 Der Abgleich (`alignPlan`/`alignApply`, Panel „Konto abgleichen") löst das über einen
 Stichtag statt über Nacharbeit:
-- Feste Töpfe (`amount` + `months`) bekommen den **Soll-Stand**: `potNeedRate × Monate seit
-  lastDue`, gedeckelt auf `amount` — genau so viel, dass die nächste Abbuchung gedeckt ist.
-- Flexible Töpfe und Sparziele behalten ihren aktuellen Wert.
-- Der **Auffang-Topf** (Notgroschen, sonst Umzug) nimmt die Differenz zum echten
-  Kontostand auf. Danach ist „nicht zugeordnet" exakt 0 €.
-- Töpfe ohne Einzahlung seit über 6 Monaten werden zum **Löschen vorgeschlagen**
-  (`alignStale`), abwählbar per Checkbox. Sparziele nie — die haben von Natur aus keine
-  laufenden Einzahlungen.
+- **Die Vorschau ist editierbar** — pro Topf ein Eingabefeld für den Einstandswert. Das ist
+  der Kern, nicht ein Extra: bei flexiblen Töpfen ist der historische Stand *nur deshalb*
+  so hoch, weil Entnahmen nie abgezogen wurden — real liegt in so einem Topf oft nur noch
+  eine Monatsrate. Den echten Wert kennt nur der Nutzer. Ein früherer Entwurf hat flexible
+  Töpfe auf ihrem angezeigten Wert *festgeschrieben*; das war der zentrale Denkfehler. **Diese Werte gehören nie in den Code** (persönliche Daten,
+  öffentliches Repo), sondern werden eingetippt.
+- Feste Töpfe (`amount` + `months`) bekommen als Vorschlag den **Soll-Stand**:
+  `potNeedRate × Monate seit lastDue`, gedeckelt auf `amount` — genau so viel, dass die
+  nächste Abbuchung gedeckt ist. Auch überschreibbar.
+- Die **Sparziele sind die Auffang-Töpfe** und nicht editierbar: der Rest zum echten
+  Kontostand füllt nach der Wasserfall-Reihenfolge des Forecasts erst den Notgroschen bis
+  zu seinem Ziel, dann den Umzug. Danach ist „nicht zugeordnet" exakt 0 €.
+  `goalTarget(p)` fällt dabei auf den `GOAL_DEFAULTS`-Zielbetrag zurück, wenn am Topf
+  keiner eingetragen ist — sonst hätte der Notgroschen keinen Deckel und der Umzug bekäme
+  nie etwas. Genau dieser Fall tritt auf, wenn der Notgroschen aus einer Einzahlung
+  abgeleitet wurde statt über `ensureGoalPots` zu entstehen.
+- **Der Stichtagsmonat ist wählbar** (Vorgabe: laufender Monat). Wichtig, weil „Stand zum
+  1.8." zweideutig ist: mit Stichtag Ende August sind die August-Einzahlungen im
+  eingetragenen Wert enthalten, mit Ende Juli kommen sie oben drauf.
+- **Jede Zeile hat ein Löschhäkchen.** Töpfe ohne Einzahlung seit über 6 Monaten sind
+  vorausgewählt (`alignStale`), Sparziele nie. Aktive Töpfe lassen sich zusätzlich
+  abhaken — nötig etwa für einen Topf, dessen Dauerauftrag noch läuft, der aber weg soll.
 - Bewusst als **Vorschau mit Bestätigung**: der Vorgang überschreibt Bestände und löscht
   Töpfe. `alignUndo()` hebt die Stichtage wieder auf; gelöschte Töpfe kommen nicht zurück
   (sie stehen in `S.hidden`).
+
+**Was der Nutzer erwartet — und was gebaut ist:** Der eingetippte Wert ist ein
+*Einstandswert*, kein wiederkehrender Sollwert. Ab dem Stichtag entwickelt sich der Topf
+allein durch die echten Ein- und Auszahlungen weiter: eingetragener Wert plus die nächste
+Monatsrate, minus zugeordnete Entnahmen. Es wird deshalb bewusst **kein** Sollwert pro Topf
+gespeichert, der bei einem späteren Abgleich erneut gesetzt würde.
 
 **`p.baseLock` ist der Schalter, nicht `p.baseYM`.** Das ist entscheidend: `POT_FLEX_DEFAULTS`
 setzt bei der Erstanlage einen `baseAmt`/`baseYM`, der nie als Stichtag gedacht war. Hing
@@ -121,6 +141,12 @@ Altposten, die niemand mehr zuordnen kann.
 - **`ensureGoalPots()`**: legt Notgroschen (10.000 €) und Umzug (5.000 €) automatisch an, falls noch kein Topf in der jeweiligen Gruppe existiert — reine Sparziele ohne Buchungshistorie, respektiert `S.hidden` bei Löschung.
 - **Wichtiges Flag-Muster**: `p.manual` verhindert, dass `derivePots()` Name/Rate aus der Zahlungshistorie erneut überschreibt, sobald der Nutzer (oder ein `*_DEFAULTS`-Eintrag) den Topf angefasst hat — **muss beim Setzen von Default-Werten explizit mitgesetzt werden**, sonst überschreibt der nächste `render()`-Lauf die Rate wieder mit dem alten historischen Wert (Bug beim Bauen der Flex-Defaults gefunden und gefixt). `p.amountManual` ist das Pendant fürs Betragsfeld bei festen Töpfen.
 - **`potForTx(t)`**: Buchungen, die schon einem Topf zugeordnet sind, zeigen in der Buchungen-Tabelle „→ Topf: XY" statt eines Kategorie-Dropdowns (das dort wirkungslos wäre) und zählen nicht im „Zuordnen"-Badge.
+- **Einzahlungen eines gelöschten Topfes verschwinden nicht.** Steht ein Topf-Key in
+  `S.hidden`, werden seine Zuflüsse wie zwecklose behandelt und über den Betrag zugeordnet
+  (`derivePots`, `potForTx`). Dadurch wandern die Einzahlungen des Geister-Topfes mit dem
+  eigenen Namen nach dessen Löschung zu Google One — **auch ohne hinterlegten `S.me.name`**,
+  was der Weg ist, auf dem Hendrik das Problem tatsächlich loswird. Vorher fiel ihr Geld
+  komplett aus der Aufteilung heraus.
 - **Zuflüsse ohne Zweckzeile** (`potlessInflow()` + `potByAmount()`): Ein Teil der willbe-Gutschriften kommt nur als `Gutschrift / eigener Name / Auftragsnummer` — ohne Zweck. Bei Hendrik betrifft das 13 der 22 Google-One-Einzahlungen. Je nachdem, ob der eigene Name unter `S.me` hinterlegt war, entstand daraus früher ein **Geister-Topf mit dem eigenen Namen** (das dokumentierte Duplikat „Hendrik Jansen") oder die Buchung fiel per `POT_SKIP` ganz heraus. Jetzt bilden solche Zuflüsse keinen Topf mehr, sondern werden über den **Betrag** dem Topf zugeschlagen, dessen Rate exakt passt — aber nur bei **genau einem** Treffer, sonst bleiben sie unzugeordnet statt geraten. Wichtig: Das setzt voraus, dass `S.me.name` gesetzt ist, sonst greift `isMine()` nicht.
 - **Entnahmen** (`setPot()`, `potForOut()`, `potOutAuto()`): Entnahmen tragen im Auszug keinen Topf-Bezug — bei willbe heißen alle nur „Zahlung willbe", weil die Überweisung kein Kommentarfeld hat. Für **feste** Töpfe ist der Topf erschließbar (Betrag ≈ `p.amount`, Monat an einem Fälligkeitsmonat ± 1, weil das Zurückholen vom Tagesgeld nicht am Abbuchungstag passiert); der Treffer wird nur **vorgeschlagen**, gesetzt wird auf Klick. Realistische Quote bei Hendriks Daten: **2 von 20** — die großen Beträge gehören zu Urlaub/Geschenke/Physio/Semesterbeitrag, für die es keine ableitbare Regel gibt. Nicht versuchen, die Quote durch weichere Toleranzen zu heben; das produziert falsche Zuordnungen, die niemand mehr nachprüft.
 - **`isRuecklagenTransfer`**: Kategorie „Vorsorge → Rücklagen-Überweisung" für die Volksbank-Abbuchung Richtung willbe — bewusst komplett aus `inFlow()` (Einnahmen/Ausgaben-Berechnung) ausgeschlossen, unabhängig von der Umbuchungs-Erkennung, sonst würde dieselbe Bewegung doppelt ins Sparen (50/30/20) einfließen (einmal über die willbe-Gutschrift via `isSaving`, einmal über die Volksbank-Kategorie).
@@ -144,6 +170,11 @@ ab welchem Monat beide Ziel-Töpfe voraussichtlich voll sind.
   `flex-direction:row`), sodass die Aufteilung die volle Höhe und den meisten Platz bekommt.
   Wichtig: nur das **direkte** Kind umstellen — `#potTools` ist ebenfalls `.col` und muss
   weiter untereinander stapeln.
+- **Die Werkzeug-Panels rechts (`#potTools`) dürfen nicht schrumpfen** (`flex:0 0 auto`),
+  sonst laufen ihre Texte übereinander: `.panel.fix>.b` steht auf `overflow:visible`, ein
+  schrumpfender Kasten schneidet seinen Inhalt also nicht ab, sondern lässt ihn über den
+  nächsten laufen. Stattdessen scrollt die Spalte als Ganzes (`overflow-y:auto`).
+  Das war live sichtbar und ist leicht wieder einzubauen.
 - Die Aufteilung ist ein **horizontales Balkendiagramm** (`renderBars`), nach Gruppen
   unterteilt und darin nach Betrag sortiert. Vorher ein Ring — der wurde mit 17 Töpfen
   unlesbar, weil kleine Posten zu Splittern schrumpfen. Die Balkenlänge bezieht sich auf
@@ -224,9 +255,9 @@ Nutzers, nichts davon landet je im Code oder in Commits.
   2026-08-11: er hat sich dafür entschieden, statt die Vergangenheit nachzuarbeiten).
   Wer künftig neue Entnahmen zuordnet, tut das nur noch für Bewegungen **nach** dem
   Stichtag; die Automatik deckt dabei nur feste Jahresrechnungen ab.
-- **`S.me.name` muss gesetzt sein**, sonst greift `isMine()` nicht: dann bildet der Import
-  wieder einen Topf mit dem eigenen Namen, und weil der dieselbe Rate wie Google One hat,
-  blockiert er zusätzlich die eindeutige Betrags-Zuordnung der zwecklosen Zuflüsse.
+- **`S.me.name` sollte gesetzt sein**, damit `isMine()` greift und beim Import gar kein Topf
+  mit dem eigenen Namen entsteht. Ist er schon da, reicht inzwischen aber das Löschen: die
+  Einzahlungen werden dann über den Betrag zugeordnet (siehe `S.hidden`-Regel oben).
 - **TBO geklärt** (Stand 2026-08-11): Der Beitrag wurde laut Vereins-Mail erhöht. Alt
   57 € × 2/Jahr (= die 9,50 €/Mon. aus der Historie), neu 114 € × 2/Jahr. `POT_DEFAULTS`
   ist damit korrekt; Hendrik muss seinen **Dauerauftrag von 9,50 € auf 19 €** erhöhen.
