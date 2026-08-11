@@ -951,7 +951,8 @@ function guessGroup(name,rate){
   const n=squash(name);
   if(/NOTGROSCHEN|PUFFER/.test(n))return'not';
   if(/UMZUG|WOHNUNG|KAUTION/.test(n))return'umz';
-  if(/URLAUB|GESCHENK|PHYSIO|MANNSCHAFT|THERAPIE|SPAREN/.test(n))return'flex';
+  // Mannschaftskasse bewusst nicht hier: sie ist eine feste Halbjahresrechnung (POT_DEFAULTS)
+  if(/URLAUB|GESCHENK|PHYSIO|THERAPIE|SPAREN/.test(n))return'flex';
   return rate>0?'fix':'';
 }
 const POT_SKIP=/^(Periode\s|Abschluss|Gutschrift$|Zahlung\s|Überweisung|Ueberweisung|E-Banking|Buchung$)|^[A-Z]{2,}(_[A-Z]{2,})+/i;
@@ -959,21 +960,28 @@ const POT_SKIP=/^(Periode\s|Abschluss|Gutschrift$|Zahlung\s|Überweisung|Ueberwe
 // wird beim nächsten Laden automatisch auf noch nicht manuell konfigurierte Töpfe
 // angewendet, ohne dass die Monate im UI angeklickt werden müssen. amount, wenn bekannt;
 // sonst wird der Jahresbetrag aus der erkannten monatlichen Rate hergeleitet.
+// Stand 2026-08: Beträge und Monate entsprechen dem, was der Nutzer selbst an seinen
+// Töpfen eingestellt bzw. genannt hat. Sie müssen damit übereinstimmen, weil der
+// Konto-Abgleich sie auf **bestehende** Töpfe anwendet (applyBillDefaults) — stünde hier
+// ein veralteter Wert, würde er eine manuelle Korrektur überschreiben.
 const POT_DEFAULTS=[
-  {test:/BAHNCARD/,months:[8]},
-  {test:/^ADAC$/,months:[8]},
-  {test:/TBOMITGLIED/,months:[1,7],amount:114},
-  {test:/BAYER0?4MITGLIED/,months:[1]},
-  {test:/GOOGLEONE/,months:[10]},
-  {test:/SCALABLECAPITAL/,months:[1],amount:143.78},
+  {test:/BAHNCARD/,months:[8],amount:39.90},
+  {test:/^ADAC$/,months:[7],amount:81},
+  {test:/TBOMITGLIED/,months:[1,7],amount:114},   // ab 2026 erhöht, vorher 57 € je Termin
+  {test:/BAYER0?4MITGLIED/,months:[1],amount:45},
+  {test:/GOOGLEONE/,months:[10],amount:103.99},   // Jahrespreis laut Abbuchung Okt 2025
+  {test:/SCALABLECAPITAL/,months:[1],amount:200},
+  {test:/MANNSCHAFTSKASSE/,months:[1,7],amount:30},   // 30 € halbjährlich; Monate geschätzt
 ];
 // Für flexible Töpfe (kein festes Fälligkeitsdatum) — nur bei der erstmaligen Anlage
 // angewendet, nie nachträglich, weil das Rate-Feld schon durch die Zahlungshistorie
 // belegt sein kann und ein blindes Überschreiben dort eher schadet als nützt.
+// Mannschaftskasse steht nicht mehr hier, sondern als feste Halbjahresrechnung in
+// POT_DEFAULTS — ein Eintrag hier würde p.manual setzen und POT_DEFAULTS blockieren.
 const POT_FLEX_DEFAULTS=[
-  {test:/^URLAUB/,rate:200},
+  {test:/^URLAUB/,rate:200,baseAmt:600,baseYM:'2026-08'},
   {test:/^PHYSIO/,rate:80,baseAmt:80,baseYM:'2026-08'},
-  {test:/MANNSCHAFTSKASSE/,rate:5},
+  {test:/^GESCHENK/,rate:50,baseAmt:350,baseYM:'2026-08'},
 ];
 // Ein Teil der willbe-Gutschriften kommt ohne Zweckzeile — im Auszug steht dann nur
 // "Gutschrift" + eigener Name + Auftragsnummer. Daraus lässt sich kein Topfname lesen:
@@ -1235,17 +1243,42 @@ let alignOpen=false,alignDel=null,alignVals=null,alignYMSel=null;
 // alignDel: IDs, die gelöscht werden sollen · alignVals: vom Nutzer überschriebene Werte
 // · alignYMSel: gewählter Stichtagsmonat
 
-// Vorgeschlagener Einstandswert. Feste Rechnungen rechnerisch aus Betrag und Fälligkeit;
-// alles andere mit dem aktuellen Stand als Ausgangspunkt, den der Nutzer überschreibt —
-// bei flexiblen Töpfen ist der historische Wert nur deshalb so hoch, weil Entnahmen nie
-// zugeordnet wurden, deshalb ist er dort bewusst nur ein Startvorschlag.
+// Bekannte Rechnungsbeträge/Fälligkeiten, die auf einen bestehenden Topf passen. Nötig,
+// weil POT_DEFAULTS sonst nur bei der **Neuanlage** greift und einen längst existierenden
+// Topf niemals erreicht — ohne das hier bliebe z.B. TBO auf dem alten Beitrag stehen.
+function billDefault(p){
+  return POT_DEFAULTS.find(d=>d.test.test(squash(p.name)))||null;
+}
+// Vorgeschlagener Einstandswert für eine feste Rechnung: **das jeweils Höhere** aus
+//  a) was nötig gewesen wäre  = Rechnung ÷ Termine × Monate seit der letzten Abbuchung
+//  b) was tatsächlich einging = Einzahlungen ab dem Abbuchungsmonat (der zählt mit, weil
+//     die Einzahlung eines Monats üblicherweise nach der Abbuchung eintrifft)
+// Beispiel des Nutzers: TBO kommt über (a) auf eine Rate, obwohl der Dauerauftrag noch zu
+// niedrig ist; die Steuerpauschale kommt über (b) höher heraus, weil dort mehr als nötig
+// überwiesen wird. Nur eine der beiden Regeln würde jeweils den anderen Fall falsch machen.
 function alignSuggest(p){
-  if(p.amount&&potMonths(p).length){
-    // So viel, dass die nächste Abbuchung gedeckt ist — nie mehr als die Rechnung selbst.
-    const need=potNeedRate(p)||0,ld=lastDue(p);
-    return Math.min(p.amount,Math.round(need*(ld?monthsBetween(ld,alignSelYM()):0)*100)/100);
+  const d=billDefault(p);
+  const amount=p.amount||(d?d.amount:0);
+  const ms=potMonths(p).length?potMonths(p):(d?d.months:[]);
+  if(amount&&ms.length){
+    const ld=lastDueFor(ms,alignSelYM());
+    const need=Math.round(amount*ms.length/12*100)/100;
+    const soll=Math.min(amount,Math.round(need*(ld?monthsBetween(ld,alignSelYM()):0)*100)/100);
+    // Abbuchungsmonat einschließen: potIn filtert strikt „nach", deshalb einen Monat zurück
+    const ist=ld?Math.round(potIn(p,addM(ld,-1))*100)/100:Math.round((p.inSum||0)*100)/100;
+    return Math.max(soll,ist);
   }
   return Math.round(potBalance(p)*100)/100;
+}
+// lastDue() für eine beliebige Monatsliste und einen beliebigen Bezugsmonat — der
+// Abgleich rechnet auf den gewählten Stichtag, nicht auf heute.
+function lastDueFor(ms,ym){
+  if(!ms||!ms.length)return null;
+  for(let i=1;i<=24;i++){
+    const m=addM(ym,-i);
+    if(ms.includes(+m.split('-')[1]))return m;
+  }
+  return null;
 }
 const alignSelYM=()=>alignYMSel||nowYM();
 // Zielbetrag eines Sparziels. Ist am Topf keines eingetragen — etwa weil er aus einer
@@ -1305,7 +1338,18 @@ function alignApply(){
   const ym=alignSelYM(),dropIds=new Set(plan.drop.map(p=>p.id));
   for(const p of plan.drop)S.hidden=[...(S.hidden||[]),p.key];
   S.pots=S.pots.filter(p=>!dropIds.has(p.id));
-  for(const r of plan.rows){r.p.baseAmt=r.nach;r.p.baseYM=ym;r.p.baseLock=true;r.p.manual=true}
+  for(const r of plan.rows){
+    // Bekannten Rechnungsbetrag und Fälligkeit mitsetzen — hier ist der einzige Moment, in
+    // dem POT_DEFAULTS einen schon bestehenden Topf erreicht. Bewusst überschreibend
+    // (auch amountManual), weil der Nutzer genau das verlangt hat.
+    const d=billDefault(r.p);
+    if(d){
+      if(d.amount!==undefined)r.p.amount=d.amount;
+      if(d.months)r.p.months=[...d.months];
+      r.p.amountManual=false;r.p.group='fix';
+    }
+    r.p.baseAmt=r.nach;r.p.baseYM=ym;r.p.baseLock=true;r.p.manual=true;
+  }
   alignOpen=false;alignDel=null;alignVals=null;alignYMSel=null;
   save();render();
   toast('Bestände festgeschrieben');
@@ -1360,19 +1404,29 @@ function renderAlign(){
   const plan=alignPlan(),del=alignDel||new Set(),vals=alignVals||{};
   // Eine Zeile je Topf: Löschhaken, Name, alter Stand, Eingabefeld für den Einstandswert.
   // Die Auffang-Töpfe sind nicht editierbar — sie ergeben sich aus dem Rest.
+  // Meldet, wenn der Abgleich Rechnungsbetrag/Fälligkeit am Topf mitkorrigiert — das ist
+  // ein Eingriff über den Bestand hinaus und muss vorher sichtbar sein.
+  const billNote=p=>{
+    const d=billDefault(p);if(!d)return'';
+    const mDiff=potMonths(p).join(',')!==(d.months||[]).join(',');
+    const aDiff=d.amount!==undefined&&Math.abs((p.amount||0)-d.amount)>0.005;
+    if(!mDiff&&!aDiff)return'';
+    return `<div class="micro" style="color:var(--dim);margin:0 0 2px 22px">Rechnung wird auf
+      ${eur(d.amount)} gesetzt (${(d.months||[]).map(m=>MON[m-1]).join(', ')})</div>`;
+  };
   const row=r=>{
     const d=Math.round((r.nach-r.von)*100)/100,eig=vals[r.p.id]!==undefined;
     return`<div style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid var(--soft)">
       <input type="checkbox" title="Topf löschen" onchange="alignDelToggle('${r.p.id}')">
       <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${esc(r.p.name)}</span>
-      <span class="mono micro" style="color:var(--dim);width:74px;text-align:right">${eur(r.von)}</span>
+      <span class="mono micro" style="color:var(--dim);width:74px;text-align:right;white-space:nowrap">${eur(r.von)}</span>
       ${r.fang
-        ? `<span class="mono" style="font-size:11.5px;width:86px;text-align:right" title="ergibt sich aus dem Rest">${eur(r.nach)}</span>
-           <span class="micro" style="width:52px;color:var(--dim)">Auffang</span>`
+        ? `<span class="mono" style="font-size:11.5px;width:86px;text-align:right;white-space:nowrap" title="ergibt sich aus dem Rest">${eur(r.nach)}</span>
+           <span class="micro" style="width:72px;color:var(--dim)">Auffang</span>`
         : `<input type="number" step="0.01" value="${r.nach}" style="width:86px;text-align:right"
              onchange="alignValSet('${r.p.id}',this.value)"${eig?' title="von dir gesetzt"':''}>
-           <span class="mono micro ${d>0?'up':'dn'}" style="width:52px;text-align:right">${Math.abs(d)<0.005?'':(d>0?'+':'')+eurS(d)}</span>`}
-      </div>`;
+           <span class="mono micro ${d>0?'up':'dn'}" style="width:72px;text-align:right;white-space:nowrap">${Math.abs(d)<0.005?'':(d>0?'+':'')+eur(d)}</span>`}
+      </div>`+billNote(r.p);
   };
   const delRows=plan.drop.map(p=>`<div style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid var(--soft);opacity:.55">
       <input type="checkbox" checked title="behalten" onchange="alignDelToggle('${p.id}')">

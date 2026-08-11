@@ -94,11 +94,23 @@ Stichtag statt über Nacharbeit:
   der Kern, nicht ein Extra: bei flexiblen Töpfen ist der historische Stand *nur deshalb*
   so hoch, weil Entnahmen nie abgezogen wurden — real liegt in so einem Topf oft nur noch
   eine Monatsrate. Den echten Wert kennt nur der Nutzer. Ein früherer Entwurf hat flexible
-  Töpfe auf ihrem angezeigten Wert *festgeschrieben*; das war der zentrale Denkfehler. **Diese Werte gehören nie in den Code** (persönliche Daten,
-  öffentliches Repo), sondern werden eingetippt.
-- Feste Töpfe (`amount` + `months`) bekommen als Vorschlag den **Soll-Stand**:
-  `potNeedRate × Monate seit lastDue`, gedeckelt auf `amount` — genau so viel, dass die
-  nächste Abbuchung gedeckt ist. Auch überschreibbar.
+  Töpfe auf ihrem angezeigten Wert *festgeschrieben*; das war der zentrale Denkfehler.
+  Startbeträge für Hendriks bekannte Töpfe stehen inzwischen auf seinen ausdrücklichen
+  Wunsch in `POT_FLEX_DEFAULTS` (siehe Privacy-Regel unten zur gezogenen Grenze).
+- Feste Töpfe bekommen als Vorschlag **das jeweils Höhere** aus (a) dem Soll-Stand
+  `Rechnung ÷ Termine × Monate seit lastDue`, gedeckelt auf `amount`, und (b) den
+  **tatsächlichen Einzahlungen ab dem Abbuchungsmonat** (der zählt mit, weil die Einzahlung
+  eines Monats meist nach der Abbuchung eintrifft). Grund: Der Nutzer denkt in beiden
+  Richtungen — bei einer Rechnung, deren Dauerauftrag noch zu niedrig ist, will er den
+  Soll-Wert; bei einem Topf, in den er mehr überweist als nötig, den tatsächlichen. Nur
+  eine der beiden Regeln macht jeweils den anderen Fall falsch. Alles überschreibbar.
+- **`billDefault()` wendet `POT_DEFAULTS` auf bestehende Töpfe an** — der Abgleich ist der
+  einzige Moment, in dem das passiert. Ohne das wäre eine Korrektur in `POT_DEFAULTS`
+  wirkungslos, weil die Tabelle sonst nur bei der Neuanlage greift und `p.amountManual`
+  eine frühere Handeingabe schützt. Deshalb **müssen die Werte in `POT_DEFAULTS` mit dem
+  übereinstimmen, was am Topf richtig ist**: stünde dort ein veralteter Betrag oder Monat,
+  überschriebe der Abgleich eine korrekte Handeingabe. Die Vorschau zeigt jede solche
+  Änderung vorher an („Rechnung wird auf … gesetzt").
 - Die **Sparziele sind die Auffang-Töpfe** und nicht editierbar: der Rest zum echten
   Kontostand füllt nach der Wasserfall-Reihenfolge des Forecasts erst den Notgroschen bis
   zu seinem Ziel, dann den Umzug. Danach ist „nicht zugeordnet" exakt 0 €.
@@ -227,6 +239,19 @@ bedenkenlos öffentlich hostbar sein. Gilt auch für Drittdaten (z. B. Namen aus
 PayPal-P2P-Zahlungen) — die App verarbeitet sie nur zur Laufzeit im Browser des
 Nutzers, nichts davon landet je im Code oder in Commits.
 
+**Wo die Grenze bei Beträgen liegt** (Stand 2026-08-12, mit Hendrik abgestimmt):
+- **Im Code erlaubt**: Rechnungs- und Beitragshöhen samt Fälligkeitsmonaten sowie
+  Rücklagen-Raten und -Startbeträge in `POT_DEFAULTS` / `POT_FLEX_DEFAULTS` /
+  `GOAL_DEFAULTS`. Hendrik hat das ausdrücklich verlangt, nachdem der Einwand genannt war;
+  ohne diese Werte im Code kann der Abgleich seine bestehenden Töpfe nicht korrigieren.
+- **Nie im Code**: Kontostände, Saldenverläufe, die Bestände einzelner Töpfe zu einem
+  Zeitpunkt, Entnahme-Historien und alles, was sich zu einem Vermögensbild zusammensetzen
+  lässt. Das gilt auch für **diese Doku** — hier ist schon einmal versehentlich ein
+  Kontostand samt Entnahme-Liste gelandet und musste wieder entfernt werden. Beispiele
+  deshalb ohne echte Zahlen formulieren.
+- Praktischer Check vor jedem Commit:
+  `git diff | grep "^+" | grep -o "[0-9][0-9.,]* €"` — jeder Treffer will begründet sein.
+
 ## Setup & Workflow
 - Lokal: `~/Projects/kontobuch`, eigenes Git-Repo, ein Repo pro Tool (nicht mit anderen Projekten vermischen).
 - Entwicklung über Claude Code Desktop, nicht mehr claude.ai-Chat — diese Datei wird automatisch als Kontext geladen.
@@ -262,6 +287,16 @@ Nutzers, nichts davon landet je im Code oder in Commits.
   57 € × 2/Jahr (= die 9,50 €/Mon. aus der Historie), neu 114 € × 2/Jahr. `POT_DEFAULTS`
   ist damit korrekt; Hendrik muss seinen **Dauerauftrag von 9,50 € auf 19 €** erhöhen.
   Der Topf-Hinweis warnt von selbst, solange die Ist-Rate darunter liegt.
+- **Mannschaftskasse: die beiden Fälligkeitsmonate sind geschätzt** (Januar/Juli, analog
+  TBO) — Hendrik hat „30 € halbjährlich" genannt, ohne die Monate. Beim nächsten Kontakt
+  nachfragen und `POT_DEFAULTS` korrigieren; bis dahin steht der Einstand über die
+  tatsächlichen Einzahlungen ohnehin plausibel.
+- **Der willbe-Export ersetzt den Monatsauszug.** Hendrik wartet auf den Monatsauszug und
+  hat den laufenden Monat deshalb nicht importiert. Die `export.csv` in seinem Drive enthält
+  aber schon die Buchungen des laufenden Monats. Wichtig vor jedem Abgleich, weil dieser
+  gegen den Kontostand aus den importierten Buchungen rechnet: fehlt der letzte Monat,
+  wird ein veralteter Stand festgeschrieben und die Differenz taucht später unter „nicht
+  zugeordnet" auf.
 - Müll-Topf `ACC_STMT_MTH_DT_LLB…` (Randtext-Artefakt, alter Bug) — Status der
   manuellen Löschung unklar, ggf. nochmal prüfen.
 - **Kurze Keywords kollidieren weiterhin** (bewusst zurückgestellt, Hendrik: „erstmal
