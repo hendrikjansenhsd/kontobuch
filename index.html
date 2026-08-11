@@ -944,10 +944,27 @@ const POT_FLEX_DEFAULTS=[
   {test:/^PHYSIO/,rate:80,baseAmt:80,baseYM:'2026-08'},
   {test:/MANNSCHAFTSKASSE/,rate:5},
 ];
+// Ein Teil der willbe-Gutschriften kommt ohne Zweckzeile — im Auszug steht dann nur
+// "Gutschrift" + eigener Name + Auftragsnummer. Daraus lässt sich kein Topfname lesen:
+// je nachdem, ob der eigene Name in den Einstellungen hinterlegt ist, entstand früher
+// entweder ein Geister-Topf mit dem eigenen Namen oder die Buchung fiel ganz heraus.
+// Beides falsch — die Einzahlung gehört zu einem existierenden Topf.
+function potlessInflow(t){
+  return acc(t.acc).kind==='ruecklage'&&t.amt>0
+    &&(/^(Gutschrift|Buchung)$/i.test((t.merchant||'').trim())||isMine(t.merchant));
+}
+// Zuordnung über den Betrag: die Rate eines Topfes identifiziert ihn eindeutig, solange
+// nicht zwei Töpfe dieselbe Rate haben. Bei mehreren Treffern bleibt die Buchung bewusst
+// unzugeordnet, statt zu raten.
+function potByAmount(amt){
+  const hits=S.pots.filter(p=>p.rate&&Math.abs(p.rate-amt)<0.005);
+  return hits.length===1?hits[0]:null;
+}
 function derivePots(){
-  const found={};
+  const found={},potless=[];
   for(const t of S.tx){
     if(acc(t.acc).kind!=='ruecklage'||t.amt<=0)continue;
+    if(potlessInflow(t)){potless.push(t);continue}
     if(POT_SKIP.test(t.merchant))continue;
     const k=mkey(t.merchant);if(!k)continue;
     if(!found[k])found[k]={key:k,name:t.merchant,rate:0,inSum:0,n:0,last:'',hist:[]};
@@ -994,7 +1011,19 @@ function derivePots(){
       }
     }
   }
-  for(const p of S.pots){if(p.inSum===undefined){p.inSum=0;p.n=0;p.last=''}}
+  // Töpfe ohne Zufluss in diesem Lauf zurücksetzen, bevor die Einzahlungen ohne
+  // Zweckzeile addiert werden — sonst würde deren Betrag bei jedem render() erneut
+  // oben draufgerechnet.
+  const live=new Set(Object.keys(found));
+  for(const p of S.pots){if(!live.has(p.key)){p.inSum=0;p.n=0;p.last=''}}
+  // Einzahlungen ohne Zweckzeile den fertigen Töpfen zuschlagen. Eigener Durchgang,
+  // weil die Raten, über die zugeordnet wird, erst nach der Ableitung oben feststehen.
+  for(const t of potless){
+    const p=potByAmount(t.amt);
+    if(!p)continue;
+    p.inSum=(p.inSum||0)+t.amt;p.n=(p.n||0)+1;
+    if(t.date>(p.last||''))p.last=t.date;
+  }
   ensureGoalPots();
 }
 // Notgroschen/Umzug haben keine eigene Buchungshistorie, aus der sie sich wie die
@@ -1016,7 +1045,9 @@ function ensureGoalPots(){
 // eigene Kategorie — die Kategorie-Auswahl wäre für sie ohnehin wirkungslos, weil
 // Rücklagenkonto-Buchungen nicht in Einnahmen/Ausgaben einfließen (inFlow).
 function potForTx(t){
-  if(acc(t.acc).kind!=='ruecklage'||t.amt<=0||POT_SKIP.test(t.merchant))return null;
+  if(acc(t.acc).kind!=='ruecklage'||t.amt<=0)return null;
+  if(potlessInflow(t))return potByAmount(t.amt);
+  if(POT_SKIP.test(t.merchant))return null;
   const k=mkey(t.merchant);if(!k)return null;
   return S.pots.find(p=>p.key===k)||null;
 }
@@ -1055,9 +1086,20 @@ function potRate(p){
 function monthsBetween(a,b){const[x,y]=a.split('-').map(Number),[u,v]=b.split('-').map(Number);return(u-x)*12+(v-y)}
 const nowYM=()=>new Date().toISOString().slice(0,7);
 
-// Bestand heute: Stichtagswert + tatsächliche Zuflüsse − zugeordnete Entnahmen.
-// Ohne importierte Bewegungen wird rechnerisch mit der Rate fortgeschrieben.
+// Bestand heute. Der willbe-Auszug trägt den Verwendungszweck jeder einzelnen
+// Einzahlung, deshalb ist der Bestand kein Schätzwert, sondern exakt bekannt:
+// Summe der echten Zuflüsse − die Entnahmen, die diesem Topf zugeordnet sind.
+// Vorher wurde stattdessen mit Rate × Monate fortgeschrieben; das lag zwangsläufig
+// neben dem Kontostand, sobald eine Rate sich geändert hatte oder ein Zufluss fehlte,
+// und zeigte Einmal-Einzahlungen (Notgroschen) als 0 € an.
+// Nur Töpfe ohne importierte Buchungen fallen auf die Fortschreibung zurück.
 function potBalance(p){
+  if(p.n>0)return Math.round(((p.start||0)+(p.inSum||0)-potOut(p,null))*100)/100;
+  return potBalanceEst(p);
+}
+// Fortschreibung ohne Buchungshistorie — für manuell angelegte Töpfe und Sparziele,
+// zu denen (noch) keine Einzahlung im Auszug steht.
+function potBalanceEst(p){
   const ms=potMonths(p);
   // Feste Rechnungen: Bestand ergibt sich aus den Monaten seit der letzten Abbuchung
   if(p.amount&&ms.length){
@@ -1075,6 +1117,46 @@ function potBalance(p){
 function potOut(p,from){
   return S.tx.filter(t=>t.pot===p.id&&t.amt<0&&(!from||t.date.slice(0,7)>from))
              .reduce((s,t)=>s+Math.abs(t.amt),0);
+}
+// Entnahme einem Topf zuordnen. Das Dropdown unter „Entnahmen zuordnen" rief diese
+// Funktion schon auf, sie war aber nie implementiert — jeder Klick lief in einen
+// ReferenceError, Entnahmen ließen sich also überhaupt nicht zuordnen. Da der Bestand
+// jetzt aus Zuflüssen minus zugeordneten Entnahmen gerechnet wird, ist das die Stelle,
+// an der die Topf-Bestände überhaupt stimmen können.
+function setPot(id,val){
+  const t=S.tx.find(x=>x.id===id);if(!t)return;
+  t.pot=val||null;
+  save();render();
+  toast(val?'Entnahme zugeordnet':'Zuordnung entfernt');
+}
+// Entnahmen tragen im Auszug keinen Topf-Bezug — bei willbe heißen alle nur
+// „Zahlung willbe", weil die Überweisung kein Kommentarfeld hat. Für feste
+// Jahresrechnungen ist der Topf trotzdem erschließbar: der Betrag entspricht dem
+// Abbuchungsbetrag, und der Monat liegt an einem Fälligkeitsmonat (± 1 Monat, weil das
+// Zurückholen vom Tagesgeld nicht am selben Tag passiert wie die Abbuchung).
+// Nur eindeutige Treffer werden vorgeschlagen, und nur vorgeschlagen — gesetzt wird auf
+// Klick. Für flexible Töpfe (Urlaub, Geschenke, Physio) gibt es keine ableitbare Regel;
+// die bleiben Handarbeit.
+function potForOut(t){
+  if(t.pot)return null;
+  const m=+t.date.slice(5,7),a=Math.abs(t.amt);
+  const hits=S.pots.filter(p=>{
+    const ms=potMonths(p);
+    if(!p.amount||!ms.length)return false;
+    if(Math.abs(p.amount-a)>Math.max(0.5,p.amount*0.02))return false;
+    return ms.some(x=>{const d=Math.abs(x-m);return d<=1||d===11});
+  });
+  return hits.length===1?hits[0]:null;
+}
+function potOutAuto(){
+  let n=0;
+  for(const t of S.tx){
+    if(acc(t.acc).kind!=='ruecklage'||t.amt>=0)continue;
+    const p=potForOut(t);
+    if(p){t.pot=p.id;n++}
+  }
+  save();render();
+  toast(n?`${n} ${n===1?'Entnahme':'Entnahmen'} zugeordnet`:'Nichts Eindeutiges gefunden');
 }
 // Nächster Fälligkeitstermin aus dem eingestellten Monat
 // Der laufende Monat zählt mit: steht die Abbuchung diesen Monat an, ist sie die nächste.
@@ -1413,7 +1495,7 @@ function renderPots(){
             <label><span class="micro">tatsächlich</span>
               <input type="number" value="${p.rate||''}" step="0.01" placeholder="wie Soll" onchange="potSet('${p.id}','rate',this.value)"><span class="micro">€/Mon.</span></label>
           `}
-          ${(!flex&&!spar)?'':`<label><span class="micro">Stand</span>
+          ${((!flex&&!spar)||p.n>0)?'':`<label><span class="micro">Stand</span>
             <input type="number" value="${p.baseAmt!==undefined&&p.baseAmt!==null?p.baseAmt:''}" step="0.01" placeholder="—" onchange="potSet('${p.id}','baseAmt',this.value)">
             <span class="micro">am Ende</span>
             <input type="month" value="${p.baseYM||''}" style="width:118px" onchange="potSet('${p.id}','baseYM',this.value)"></label>`}
@@ -1427,21 +1509,41 @@ function renderPots(){
 
   const outs=S.tx.filter(t=>acc(t.acc).kind==='ruecklage'&&t.amt<0)
                  .sort((a,b)=>b.date.localeCompare(a.date));
-  document.getElementById('outs').innerHTML=outs.length?outs.map(t=>`
+  const nSug=outs.filter(t=>potForOut(t)).length;
+  document.getElementById('outs').innerHTML=outs.length?
+    (nSug?`<div class="note" style="margin-bottom:7px">${nSug} ${nSug===1?'Entnahme passt':'Entnahmen passen'} zu einer festen Jahresrechnung.
+      <button class="bare sm" onclick="potOutAuto()">Alle übernehmen</button></div>`:'')
+    +outs.map(t=>{const s=potForOut(t);return`
     <div style="display:flex;gap:7px;align-items:center;padding:4px 0;border-bottom:1px solid var(--soft)">
       <span class="mono" style="font-size:11px;color:var(--mid);white-space:nowrap">${dmy(t.date)}</span>
       <span class="mono" style="font-size:11.5px;color:var(--out);white-space:nowrap">${eur(Math.abs(t.amt))}</span>
-      <select class="pick" style="margin-left:auto;max-width:170px" onchange="setPot('${t.id}',this.value)">
+      ${s?`<button class="bare sm" style="margin-left:auto" title="Vorschlag übernehmen" onclick="setPot('${t.id}','${s.id}')">→ ${esc(s.name)}</button>`:''}
+      <select class="pick" style="${s?'':'margin-left:auto;'}max-width:170px" onchange="setPot('${t.id}',this.value)">
         <option value="">– offen –</option>
         ${S.pots.map(p=>`<option value="${p.id}"${t.pot===p.id?' selected':''}>${esc(p.name)}</option>`).join('')}
-      </select></div>`).join('')
+      </select></div>`}).join('')
     :'<div class="empty">Keine Entnahmen.</div>';
   renderRing();
   const sum=S.pots.reduce((s,p)=>s+potBalance(p),0),rest=wb-sum;
+  // Solange Entnahmen keinem Topf zugeordnet sind, fehlen sie in den Beständen und die
+  // Topf-Summe liegt über dem Kontostand. Das ist die häufigste Ursache für einen
+  // negativen Rest — sie hier benennen, statt pauschal „prüfe die Bestände" zu sagen.
+  const offen=S.tx.filter(t=>acc(t.acc).kind==='ruecklage'&&t.amt<0&&!t.pot);
+  const offenSum=offen.reduce((s,t)=>s+Math.abs(t.amt),0);
+  // Zinsabschlüsse gehören zu keinem Zweck und bleiben deshalb dauerhaft im Rest.
+  const zins=S.tx.filter(t=>acc(t.acc).kind==='ruecklage'&&t.amt>0&&/^(Periode|Abschluss)/i.test(t.merchant||''))
+                 .reduce((s,t)=>s+t.amt,0);
+  let hint;
+  if(offen.length)hint=`${offen.length} ${offen.length===1?'Entnahme':'Entnahmen'} über ${eur(offenSum)} `
+    +`${offen.length===1?'ist':'sind'} noch keinem Topf zugeordnet — solange sind die Topf-Bestände um diesen Betrag zu hoch.`;
+  else if(rest>1)hint='Dieser Betrag liegt auf dem Konto, ist aber keinem Topf zugeordnet.';
+  else if(rest<-1)hint='Die Töpfe übersteigen den Kontostand — prüfe die eingetragenen Bestände.';
+  else hint='Alles zugeordnet.';
+  if(zins>0.005)hint+=` Unabhängig davon gehören ${eur(zins)} Zinsen zu keinem Zweck und bleiben dauerhaft im Rest.`;
   document.getElementById('unal').innerHTML=`
     <div style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:${Math.abs(rest)<1?'var(--dim)':'var(--out)'}">${eur(rest)}</div>
     <div class="micro" style="margin-top:4px">Kontostand ${eur(wb)} − Töpfe ${eur(sum)}</div>
-    <div class="note">${rest>1?'Dieser Betrag liegt auf dem Konto, ist aber keinem Topf zugeordnet.':rest<-1?'Die Töpfe übersteigen den Kontostand — prüfe die eingetragenen Bestände.':'Alles zugeordnet.'}</div>`;
+    <div class="note">${hint}</div>`;
 }
 
 // Ringdiagramm: feste Rechnungen als ein Segment, alles Variable einzeln.
@@ -1482,10 +1584,21 @@ function renderRing(){
       </div>`).join('')}</div></div>
     ${rest<-0.005?`<div class="note">Die Töpfe übersteigen den Kontostand um ${eur(-rest)} — prüfe die eingetragenen Bestände.</div>`:''}`;
 }
+// Woher der angezeigte Bestand kommt. Sichtbar machen, damit die Zahl nicht wie ein
+// Schätzwert wirkt — bei importierter Historie ist sie exakt nachrechenbar.
+function potSrc(p){
+  if(!(p.n>0))return'';
+  const out=potOut(p,null),nOut=S.tx.filter(t=>t.pot===p.id&&t.amt<0).length;
+  return `${p.n} ${p.n===1?'Einzahlung':'Einzahlungen'} ${eur(p.inSum||0)}`
+    +(p.start?` + Start ${eur(p.start)}`:'')
+    +(nOut?` − ${nOut} ${nOut===1?'Entnahme':'Entnahmen'} ${eur(out)}`:'');
+}
 function potHint(p){
   const b=potBalance(p),rate=potRate(p),now=nowYM();
   const spar=p.group==='not'||p.group==='umz';
-  const line=t=>`<div class="micro" style="margin-top:3px;line-height:1.55">${t}</div>`;
+  const src=potSrc(p);
+  const line=t=>`<div class="micro" style="margin-top:3px;line-height:1.55">`
+    +(src?`<span style="color:var(--dim)">${src}</span><br>`:'')+t+`</div>`;
   if(p.group==='flex')return line(rate
     ? `Du legst ${eur(rate)}/Mon. zurück. Entnahmen ordnest du rechts unter „Entnahmen zuordnen“ zu.`
     : 'Trag ein, wie viel du monatlich zurücklegst.');

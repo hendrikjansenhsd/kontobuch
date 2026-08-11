@@ -58,10 +58,31 @@ optionale Google-Drive-Anbindung zum automatischen Einlesen von Auszügen.
 - Eigener Name/Adresse/IBAN **nie** im Code — führte einmal dazu, dass private Daten im (für GitHub gedachten) Quelltext standen. Jetzt ausschließlich über `S.me`, lokal im Browser gepflegt.
 - **Kurze Keywords kollidieren mit Standard-Buchungstext, nicht nur mit Referenznummern.** Bug gefunden: `'ASI '` (Kurs-Kategorie) matchte als Substring in „B**ASI**slastschrift" — betraf potenziell *jede* sonst unkategorisierte Lastschrift, nicht nur den gemeldeten Einzelfall. Bei neuen Keywords ≤4 Zeichen immer gegen gängige Buchungstext-Bausteine prüfen (Basislastschrift, Kartenzahlung girocard, Überweisungsgutschrift, IBAN/EREF/MREF/…), nicht nur gegen den einen gemeldeten Fall.
 - `suggest()` filtert Referenznummern (IBAN/EREF/MREF/CRED/BIC/Auftragsnummer) über `stripRefNoise()` vorm Matching raus — ohne das matchten kurze Keywords zufällig innerhalb von Mandatsreferenzen.
+- **Im UI aufgerufene Funktion war nie definiert.** `setPot(id,val)` wurde vom Dropdown „Entnahmen zuordnen" per `onchange` aufgerufen, existierte aber nicht — jede Auswahl lief in einen `ReferenceError`, es ließ sich also **keine einzige Entnahme zuordnen**. Das fiel lange nicht auf, weil der Bestand damals ohnehin geschätzt wurde und die fehlende Zuordnung nichts sichtbar veränderte. Lehre: Bei `onclick`/`onchange`-Handlern in Template-Strings prüft nichts, ob die Funktion existiert — nach dem Bauen einer neuen UI-Aktion den Handler einmal wirklich auslösen, nicht nur die Kachel ansehen. `grep -c 'function <name>'` ist der billige Check.
 - Duplikate Keyword über zwei Kategorien (z. B. „DEBEKA" gleichzeitig bei Kranken und Unfall) sind nicht zuverlässig auflösbar, wenn dieselbe Handelsregister-/Vereinsbezeichnung für unterschiedliche Vertragsarten steht — im Zweifel den Nutzer fragen, ob es wirklich nur eine Bedeutung hat, bevor das Keyword verschoben statt dupliziert wird.
 
 ## Rücklagentöpfe (Modell nach mehreren Iterationen)
 Vier Gruppen: `fix` (feste Jahres-/Quartalsrechnungen), `flex` (variable Rücklagen wie Urlaub/Geschenke/Mannschaftskasse), `not` (Notgroschen), `umz` (Umzug).
+
+**Bestand = echte Zuflüsse − zugeordnete Entnahmen** (`potBalance()`). Der willbe-Auszug
+trägt den Verwendungszweck jeder einzelnen Einzahlung, deshalb ist der Bestand exakt
+bekannt und wird nicht geschätzt. Nur Töpfe **ohne** importierte Buchungen (`p.n===0`,
+also manuell angelegte) fallen auf die rechnerische Fortschreibung `potBalanceEst()`
+zurück (Rate × Monate bzw. Stichtagswert). Vorher galt die Fortschreibung immer — das lag
+zwangsläufig neben dem Kontostand, sobald sich eine Rate geändert hatte, und zeigte Töpfe,
+die aus einer **einzelnen großen Einzahlung** bestehen (Notgroschen, Einmal-Rücklagen),
+als 0 € an: `f.n<3` setzt die Rate auf 0, und ohne `amount`/`months`/`baseAmt` fiel
+`potBalance` auf `return 0`. Das betraf den größten Teil des Kontos. `p.inSum` wurde
+damals schon berechnet, aber nie verwendet. Deshalb sind bei Töpfen mit Historie die
+Felder „Stand am Ende" (`baseAmt`/`baseYM`) ausgeblendet — sie wären wirkungslos.
+`potSrc()` zeigt in jeder Topf-Kachel die Herkunft („N Einzahlungen … − M Entnahmen …").
+
+**Konsistenz-Probe** (gegen echte Auszüge verifiziert, Zahlen bleiben bewusst aus dieser
+Doku): Summe aller Zuflüsse − Summe aller Entnahmen muss den Kontostand ergeben. Sind
+alle Entnahmen einem Topf zugeordnet, bleibt als „nicht zugeordnet" **genau die Summe der
+Zinsabschlüsse** übrig — die gehören zu keinem Zweck. Weicht der Rest darüber hinaus ab,
+sind Entnahmen offen; der Hinweistext unter „nicht zugeordnet" benennt das mit Anzahl und
+Betrag, statt pauschal „prüfe die Bestände" zu sagen.
 
 - **Feste Töpfe**: Eingabe ist Abbuchungsbetrag + Fälligkeitsmonate (Mehrfachauswahl). Rate = Betrag × Anzahl Termine ÷ 12, vollautomatisch. Bestand = Rate × Monate seit der letzten Abbuchung. Feld „tatsächlich" überschreibt die berechnete Soll-Rate für den Forecast, falls der reale Dauerauftrag noch nicht angepasst wurde — **`potRate()` bevorzugt „tatsächlich" gegenüber der Soll-Formel**, das beim Korrigieren eines Topfs leicht zu übersehen.
 - **Flexible Töpfe**: Rate + Stichtagsbestand (`baseAmt`/`baseYM`). Entnahmen werden manuell zugeordnet (Tab „Rücklagen" → „Entnahmen zuordnen").
@@ -70,6 +91,8 @@ Vier Gruppen: `fix` (feste Jahres-/Quartalsrechnungen), `flex` (variable Rückla
 - **`ensureGoalPots()`**: legt Notgroschen (10.000 €) und Umzug (5.000 €) automatisch an, falls noch kein Topf in der jeweiligen Gruppe existiert — reine Sparziele ohne Buchungshistorie, respektiert `S.hidden` bei Löschung.
 - **Wichtiges Flag-Muster**: `p.manual` verhindert, dass `derivePots()` Name/Rate aus der Zahlungshistorie erneut überschreibt, sobald der Nutzer (oder ein `*_DEFAULTS`-Eintrag) den Topf angefasst hat — **muss beim Setzen von Default-Werten explizit mitgesetzt werden**, sonst überschreibt der nächste `render()`-Lauf die Rate wieder mit dem alten historischen Wert (Bug beim Bauen der Flex-Defaults gefunden und gefixt). `p.amountManual` ist das Pendant fürs Betragsfeld bei festen Töpfen.
 - **`potForTx(t)`**: Buchungen, die schon einem Topf zugeordnet sind, zeigen in der Buchungen-Tabelle „→ Topf: XY" statt eines Kategorie-Dropdowns (das dort wirkungslos wäre) und zählen nicht im „Zuordnen"-Badge.
+- **Zuflüsse ohne Zweckzeile** (`potlessInflow()` + `potByAmount()`): Ein Teil der willbe-Gutschriften kommt nur als `Gutschrift / eigener Name / Auftragsnummer` — ohne Zweck. Bei Hendrik betrifft das 13 der 22 Google-One-Einzahlungen. Je nachdem, ob der eigene Name unter `S.me` hinterlegt war, entstand daraus früher ein **Geister-Topf mit dem eigenen Namen** (das dokumentierte Duplikat „Hendrik Jansen") oder die Buchung fiel per `POT_SKIP` ganz heraus. Jetzt bilden solche Zuflüsse keinen Topf mehr, sondern werden über den **Betrag** dem Topf zugeschlagen, dessen Rate exakt passt — aber nur bei **genau einem** Treffer, sonst bleiben sie unzugeordnet statt geraten. Wichtig: Das setzt voraus, dass `S.me.name` gesetzt ist, sonst greift `isMine()` nicht.
+- **Entnahmen** (`setPot()`, `potForOut()`, `potOutAuto()`): Entnahmen tragen im Auszug keinen Topf-Bezug — bei willbe heißen alle nur „Zahlung willbe", weil die Überweisung kein Kommentarfeld hat. Für **feste** Töpfe ist der Topf erschließbar (Betrag ≈ `p.amount`, Monat an einem Fälligkeitsmonat ± 1, weil das Zurückholen vom Tagesgeld nicht am Abbuchungstag passiert); der Treffer wird nur **vorgeschlagen**, gesetzt wird auf Klick. Realistische Quote bei Hendriks Daten: **2 von 20** — die großen Beträge gehören zu Urlaub/Geschenke/Physio/Semesterbeitrag, für die es keine ableitbare Regel gibt. Nicht versuchen, die Quote durch weichere Toleranzen zu heben; das produziert falsche Zuordnungen, die niemand mehr nachprüft.
 - **`isRuecklagenTransfer`**: Kategorie „Vorsorge → Rücklagen-Überweisung" für die Volksbank-Abbuchung Richtung willbe — bewusst komplett aus `inFlow()` (Einnahmen/Ausgaben-Berechnung) ausgeschlossen, unabhängig von der Umbuchungs-Erkennung, sonst würde dieselbe Bewegung doppelt ins Sparen (50/30/20) einfließen (einmal über die willbe-Gutschrift via `isSaving`, einmal über die Volksbank-Kategorie).
 
 ## Forecast
@@ -112,6 +135,15 @@ ab welchem Monat beide Ziel-Töpfe voraussichtlich voll sind.
   der PayPal-Parser gegen einen echten Aktivitäten-Export getestet (30 Buchungen, alle
   vier Typen exakt richtig klassifiziert). Danach immer `localStorage.clear()` und
   keine echten Namen/Beträge im Code oder in Commit-Messages.
+- **Echte Daten testen, ohne sie ins Repo zu legen**: `launch.json` mit
+  `["-m","http.server","<port>","--directory","<scratchpad>"]` aus dem Scratchpad
+  servieren, `index.html` per Symlink aus dem Repo dorthin verlinken und die echten
+  Auszüge daneben legen. Dann im Browser `fetch('<datei>')` + `parseCSV(...)` direkt
+  aufrufen, `S.tx` setzen, `derivePots()` — so lässt sich die volle Topf-Rechnung gegen
+  echte Daten prüfen, ohne dass eine Datei mit Finanzdaten je im Git-Verzeichnis liegt.
+  Hendriks Auszüge liegen in seinem Google Drive (Ordner „Willbe" → `export.csv`, und die
+  Volksbank-Kontoauszug-PDFs); über den Drive-Connector lesbar. Danach Scratchpad-Kopien
+  **und** das heruntergeladene Tool-Ergebnis löschen.
 - Nach jedem Test: temporäres `.claude/launch.json` wieder löschen (liegt außerhalb
   des Kontobuch-Repos, im übergeordneten Arbeitsverzeichnis der jeweiligen Session).
 
@@ -139,11 +171,34 @@ Nutzers, nichts davon landet je im Code oder in Commits.
 
 ## Offene Punkte (Stand zuletzt)
 - **Manuelle Korrekturen, die nur Hendrik selbst in seiner Live-Instanz machen kann**
-  (Rücklagen-Tab): Töpfe „ASI Servicegebühr", „Semesterbeitrag" und „Hendrik Jansen"
-  (Duplikat von Google One) löschen; TBO-Topf „Abbuchung" auf 114 € und Feld
-  „tatsächlich" auf 19 € (oder leeren) setzen.
+  (Rücklagen-Tab): Töpfe „ASI Servicegebühr" und „Semesterbeitrag" löschen (Semesterbeitrag
+  ist ausgelaufen, letzter Zufluss Ende 2025; ASI läuft in den Daten dagegen aktiv weiter
+  — vor dem Löschen kurz rückfragen). Den Topf „Hendrik Jansen" löschen: er bildet sich
+  nicht mehr neu, **solange `S.me.name` in den Einstellungen gesetzt ist** — ist er noch
+  da, blockiert er als zweiter Topf mit derselben Rate die eindeutige Betrags-Zuordnung
+  der zwecklosen Google-One-Zuflüsse.
+- **Die meisten Entnahmen sind noch keinem Topf zugeordnet.** Solange liegen die
+  Topf-Bestände zu hoch und der „nicht zugeordnet"-Rest ist negativ. Das ist Handarbeit
+  im Rücklagen-Tab und kann nur Hendrik selbst machen — die Automatik deckt nur feste
+  Jahresrechnungen ab. Die plausible Zuordnung der restlichen Entnahmen (Physio, Urlaub,
+  Semesterbeitrag, TBO zum alten Beitrag) wurde einmal analysiert und Hendrik im Chat
+  genannt, bewusst nicht hier festgehalten und nicht automatisch gesetzt.
+- **TBO geklärt** (Stand 2026-08-11): Der Beitrag wurde laut Vereins-Mail erhöht. Alt
+  57 € × 2/Jahr (= die 9,50 €/Mon. aus der Historie), neu 114 € × 2/Jahr. `POT_DEFAULTS`
+  ist damit korrekt; Hendrik muss seinen **Dauerauftrag von 9,50 € auf 19 €** erhöhen.
+  Der Topf-Hinweis warnt von selbst, solange die Ist-Rate darunter liegt.
 - Müll-Topf `ACC_STMT_MTH_DT_LLB…` (Randtext-Artefakt, alter Bug) — Status der
   manuellen Löschung unklar, ggf. nochmal prüfen.
+- **Kurze Keywords kollidieren weiterhin** (bewusst zurückgestellt, Hendrik: „erstmal
+  nicht machen"): `squash()` entfernt auch Leerzeichen, damit ist der Wortgrenzen-Schutz
+  durch ein angehängtes Leerzeichen (`'TK '`, `'STAR '`, `'O2 '`, `'RE 1'`) **wirkungslos**
+  — `TK` matcht z. B. in „MARK**TK**AUF". Ohne Schutz gebaut und genauso kurz: `'GAS'`
+  (GASTHAUS/GASTRONOMIE), `'OBI'` (M**OBI**LFUNK/MOBILCOM/IMMOBILIEN), `'GYM'`
+  (GYMNASIUM), `'TBO'` (SPOR**TBO**DEN), `'NETTO'` (NETTOBETRAG), `'MUELLER'` (häufiger
+  Nachname bei Überweisungen). Die Längen-Regel in `suggest()` rettet nur Fälle, in denen
+  zufällig ein längeres Keyword im selben Text steht. Ein Fix an der **Matching-Logik**
+  (Wortgrenzen) würde sofort auch Hendriks bestehende Keywords heilen; ein Fix an
+  `DEFAULT_CATS` wirkt nur auf Neuanlagen.
 - Google Drive: Client-ID wurde erzeugt, Verbindungsaufbau (OAuth + Ordnerauswahl)
   war zuletzt noch nicht gemeinsam live getestet (nur Code-seitig verifiziert).
 - Scalable-Capital-Steuerpauschale: bewusst als „fester Topf mit manuell jährlich
