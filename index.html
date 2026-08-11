@@ -391,7 +391,7 @@
 
 <div class="veil" id="veil"><div class="modal">
   <h2>Kontoauszug laden</h2>
-  <p class="s">Volksbank, N26 und willbe werden automatisch erkannt. Alles bleibt in deinem Browser.</p>
+  <p class="s">Volksbank, N26 und willbe werden automatisch erkannt. PayPal nur über „Text einfügen" — Aktivitäten-Seite mit Strg/Cmd+A markieren, kopieren, unten einfügen. Alles bleibt in deinem Browser.</p>
   <div class="drop" id="drop">
     <input type="file" id="fPdf" accept="application/pdf,text/csv,.csv" multiple>
     <div style="font-weight:500;color:var(--txt)">PDF oder CSV wählen &mdash; oder hierher ziehen</div>
@@ -400,7 +400,7 @@
   <div id="pdfWarn" style="display:none" class="note">Der PDF-Leser konnte nicht geladen werden — dafür braucht die Seite einmalig Internet. Ohne ihn funktioniert alles Weitere trotzdem: Auszug im PDF-Betrachter markieren, kopieren, unten einfügen.</div>
   <div style="margin-top:13px">
     <div class="micro" style="margin-bottom:5px">Alternativ Text einfügen</div>
-    <textarea id="paste" placeholder="Text aus dem PDF-Betrachter hier einfügen"></textarea>
+    <textarea id="paste" placeholder="Text aus dem PDF-Betrachter oder von paypal.com/myaccount/activities (Strg/Cmd+A) hier einfügen"></textarea>
     <div style="display:flex;gap:7px;margin-top:8px;justify-content:flex-end">
       <button id="bClose">Schließen</button><button class="accent" id="bPaste">Text auswerten</button>
     </div>
@@ -418,6 +418,7 @@ const ACCOUNTS=[
   {id:'vb',   name:'Volksbank', kind:'privat'},
   {id:'n26',  name:'N26',       kind:'geschaeft'},
   {id:'wb',   name:'willbe',    kind:'ruecklage'},
+  {id:'pp',   name:'PayPal',    kind:'privat'},
 ];
 
 // goal: need | want | save  (Basis für 50/30/20)
@@ -567,6 +568,7 @@ function detectFormat(lines){
   if(/Saldovortrag|Zu\s?Ihren\s?Lasten|willbe-invest/i.test(t))return'wb';
   if(/Verbuchungsdatum|NTSBDEB1XXX/i.test(t))return'n26';
   if(/\d{2}\.\d{2}\.\s+\d{2}\.\d{2}\.\s+.+\s+[\d.]+,\d{2}\s+[SH]/.test(t))return'vb';
+  if(/Zahlung im Einzugsverfahren|Geld (erhalten|gesendet)|Sofortzahlung auf Bankkonto/i.test(t))return'pp';
   return null;
 }
 
@@ -757,6 +759,75 @@ function parseWB(lines){
   if(end)list.balance={date:`${end[3]}-${end[2]}-${end[1]}`,amt:chNum(end[4])};
   else if(bal!==null&&list.length)list.balance={date:list[list.length-1].date,amt:bal};
   return list;
+}
+
+/* ============ Parser: PayPal (Aktivitäten-Seite, nur Text-Einfügen) ============ */
+// PayPal bietet keinen Export — der Nutzer markiert die Aktivitäten-Seite komplett
+// (Strg/Cmd+A) und fügt den Text ein. Buchungen werden an der Betragszeile
+// ("+12,34 €" / "−12,34 €") plus der direkt folgenden Datumszeile erkannt; alles
+// andere (Navigation, Fußzeile) trifft dieses Muster nicht und wird ignoriert —
+// robuster als jede Feld-Skip-Liste zu pflegen.
+const PP_MONTH={jan:1,feb:2,mär:3,mar:3,apr:4,mai:5,jun:6,jul:7,aug:8,sep:9,okt:10,nov:11,dez:12};
+const PP_AMT=/^([+\-−])\s?([\d.]+,\d{2})\s?€$/;
+const PP_DATE=/^(\d{1,2})\.\s*([A-Za-zÄÖÜäöü]+)\.?\s*\.\s*(.+)$/;
+const PP_YEAR=/^[A-Za-zÄÖÜäöü.]+\s+(\d{4})$/;
+const PP_INITIALS=/^[A-ZÄÖÜ]{2,4}$/;
+function ppMonth(name){return PP_MONTH[name.toLowerCase().replace(/\.$/,'').slice(0,3)]||null}
+function parsePayPal(lines){
+  // Markdown-Link-Reste (falls der Text über eine Zwischenablage lief, die Links umwandelt)
+  const L=lines.map(l=>l.trim().replace(/^\[(.+?)\]\(.+?\)$/,'$1')).filter(Boolean);
+  let year=new Date().getFullYear();
+  const out=[];
+  for(let i=0;i<L.length;i++){
+    const ym=L[i].match(PP_YEAR);
+    if(ym){year=+ym[1];continue}
+    const am=L[i].match(PP_AMT);
+    if(!am)continue;
+    const dm=(L[i+1]||'').match(PP_DATE);
+    if(!dm)continue;
+    const mo=ppMonth(dm[2]);if(!mo)continue;
+    let merchant=(L[i-1]||'').trim();
+    if(!merchant)continue;
+    const note=(L[i+2]||'').match(/^"(.+)"$/);
+    const typ=dm[3];
+    const amt=(am[1]==='+'?1:-1)*deNum(am[2]);
+    const date=`${year}-${String(mo).padStart(2,'0')}-${dm[1].padStart(2,'0')}`;
+    let kind='balance';
+    if(/Einzugsverfahren/i.test(typ))kind='collected';
+    else if(/Geld (erhalten|gesendet)/i.test(typ))kind='p2p';
+    else if(/Sofortzahlung auf Bankkonto/i.test(typ))kind='payout';
+    out.push({date,merchant:unglue(merchant),note:note?note[1]:'',amt,kind});
+  }
+  return out;
+}
+// Buchungen "im Einzugsverfahren" reichert die schon importierte, vage
+// Volksbank/N26-Lastschrift ("PayPal (Empfänger unbenannt)") mit dem echten Empfänger
+// an, statt sie doppelt anzulegen. Alle anderen Arten werden neue Buchungen auf einem
+// eigenen PayPal-Konto — Guthabenzahlungen, Geld an/von Personen, Auszahlung an die Bank
+// (letztere verknüpft sich über die normale Umbuchungs-Erkennung mit der Bankgutschrift).
+function importPayPal(lines){
+  const entries=parsePayPal(lines);
+  const usedIds=new Set();
+  let enriched=0;
+  const newList=[];
+  for(const e of entries){
+    if(e.kind==='collected'){
+      const target=S.tx.find(t=>!usedIds.has(t.id)&&(t.acc==='vb'||t.acc==='n26')
+        &&/paypal/i.test(t.merchant)&&Math.abs(t.amt-e.amt)<0.01
+        &&Math.abs(new Date(t.date)-new Date(e.date))<=10*864e5);
+      if(target){
+        usedIds.add(target.id);
+        target.merchant=e.merchant;
+        if(e.note)target.note=e.note;
+        if(!target.manual){const g=suggest(target.merchant,`${target.merchant} ${target.note}`);target.cat=g.cat;target.sub=g.sub}
+        enriched++;
+      }
+      continue;
+    }
+    newList.push(mk('pp',e.date,e.merchant,e.note,e.amt,`${e.merchant} ${e.note}`));
+  }
+  const{add,skip}=merge(newList);
+  return{added:add,skip,enriched,total:entries.length};
 }
 
 /* ============ Buchung bauen ============ */
@@ -1632,7 +1703,15 @@ async function handleFiles(fl){
   if(o)toast(`${o} Buchungen ohne Kategorie — Tab „Zuordnen"`);
 }
 document.getElementById('bPaste').onclick=()=>{
-  const{f,acc:a,list,balance}=parseSource(document.getElementById('paste').value);
+  const raw=document.getElementById('paste').value;
+  if(detectFormat(raw.split('\n'))==='pp'){
+    const r=importPayPal(raw.split('\n'));
+    if(!r.total){stat('Kein bekanntes Format erkannt','err');return}
+    save();render();veil.classList.remove('on');document.getElementById('paste').value='';
+    stat(`${r.added} neu, ${r.enriched} angereichert${r.skip?`, ${r.skip} Duplikate`:''} (PayPal)`,'ok');
+    return;
+  }
+  const{f,acc:a,list,balance}=parseSource(raw);
   if(!list.length){stat('Kein bekanntes Format erkannt','err');return}
   noteBalance(a||'wb',balance);
   const{add,skip}=merge(list);
