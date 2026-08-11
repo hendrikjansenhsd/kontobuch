@@ -71,6 +71,9 @@
   .cov{flex-shrink:0;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--dim);letter-spacing:.01em}
   .cov b{color:var(--mid);font-weight:600}
   .cov .gap{color:var(--alert)}
+  .fcwrap{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0}
+  .fcwrap>.g2{flex:1;min-height:0}
+  .fcwrap>.wf{flex:0 0 200px;min-height:0}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0}
   .panel>.h{display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid var(--soft);flex-shrink:0}
   .panel>.h .micro{color:var(--mid)}
@@ -326,6 +329,7 @@
     </section>
 
     <section class="view" id="v-fc">
+      <div class="fcwrap">
       <div class="g2">
         <div class="panel">
           <div class="h"><span class="micro">Kontostandsprognose</span><span class="micro r" id="fcHint"></span></div>
@@ -355,6 +359,15 @@
             <button class="bare sm r" id="fcAdd">+ Posten</button></div>
             <div class="b" id="fcEv"></div></div>
         </div>
+      </div>
+      <div class="panel wf">
+        <div class="h"><span class="micro">Rücklagen-Verteilung</span><span class="micro r" id="wfHint"></span></div>
+        <div class="b" style="padding:0"><table><thead><tr>
+          <th style="width:70px">Monat</th><th style="text-align:right">Überschuss</th>
+          <th style="text-align:right">→ Notgroschen</th><th style="text-align:right">→ Umzug</th>
+          <th style="text-align:right">→ Scalable Capital</th>
+        </tr></thead><tbody id="wfB"></tbody></table></div>
+      </div>
       </div>
     </section>
 
@@ -918,10 +931,18 @@ const POT_SKIP=/^(Periode\s|Abschluss|Gutschrift$|Zahlung\s|Überweisung|Ueberwe
 const POT_DEFAULTS=[
   {test:/BAHNCARD/,months:[8]},
   {test:/^ADAC$/,months:[8]},
-  {test:/TBOMITGLIED/,months:[1,7]},
+  {test:/TBOMITGLIED/,months:[1,7],amount:114},
   {test:/BAYER0?4MITGLIED/,months:[1]},
   {test:/GOOGLEONE/,months:[10]},
   {test:/SCALABLECAPITAL/,months:[1],amount:143.78},
+];
+// Für flexible Töpfe (kein festes Fälligkeitsdatum) — nur bei der erstmaligen Anlage
+// angewendet, nie nachträglich, weil das Rate-Feld schon durch die Zahlungshistorie
+// belegt sein kann und ein blindes Überschreiben dort eher schadet als nützt.
+const POT_FLEX_DEFAULTS=[
+  {test:/^URLAUB/,rate:200},
+  {test:/^PHYSIO/,rate:80,baseAmt:80,baseYM:'2026-08'},
+  {test:/MANNSCHAFTSKASSE/,rate:5},
 ];
 function derivePots(){
   const found={};
@@ -950,8 +971,18 @@ function derivePots(){
   for(const f of Object.values(found)){
     if((S.hidden||[]).includes(f.key))continue;
     let p=S.pots.find(p=>p.key===f.key);
-    if(!p){p={id:uid(),key:f.key,name:f.name,rate:f.rate,target:null,start:0,manual:false,
-              group:guessGroup(f.name,f.rate)};S.pots.push(p)}
+    if(!p){
+      p={id:uid(),key:f.key,name:f.name,rate:f.rate,target:null,start:0,manual:false,
+         group:guessGroup(f.name,f.rate)};
+      const fd=POT_FLEX_DEFAULTS.find(d=>d.test.test(squash(f.name)));
+      if(fd){
+        p.rate=fd.rate;
+        if(fd.baseAmt!==undefined)p.baseAmt=fd.baseAmt;
+        if(fd.baseYM)p.baseYM=fd.baseYM;
+        p.manual=true; // sonst überschreibt die nächste Ableitung die Rate wieder mit der Historie
+      }
+      S.pots.push(p);
+    }
     else if(!p.manual){p.name=f.name;p.rate=f.rate}
     p.inSum=f.inSum;p.n=f.n;p.last=f.last;p.prev=f.prev;
     if(!p.manual&&(!p.months||!p.months.length)){
@@ -1112,7 +1143,7 @@ function agg(list,months){
 function render(){
   linkTransfers();derivePots();
   renderScope();renderKpis();renderCats();renderCatsIn();renderGoals();renderMovers();renderMonths();renderCoverage();
-  renderTable();renderPots();renderAssign();renderFc();renderCatEd();
+  renderTable();renderPots();renderAssign();renderFc();renderWaterfall();renderCatEd();
   const o=S.tx.filter(t=>!t.cat&&!t.ign&&!isTransfer(t)&&!potForTx(t)).length;
   const b=document.getElementById('bOpen');b.textContent=o;b.classList.toggle('zero',!o);
 }
@@ -1617,6 +1648,43 @@ function renderFc(){
       <button class="bare sm" onclick="fcDel('${e.id}')">✕</button>
     </div>`).join('')
     :'<div class="empty">Noch keine Posten. Gehalt, Sonderzahlungen und feste Ausgaben hier eintragen.</div>';
+}
+// Verteilt den monatlichen Forecast-Überschuss (Ein − Aus, inkl. aller Topf-Raten —
+// Notgroschen/Umzug ohne eigene Rate zählen da noch nicht mit) zuerst auf Notgroschen,
+// dann auf Umzug, der Rest ist die Empfehlung Richtung Scalable Capital.
+function renderWaterfall(){
+  const box=document.getElementById('wfB');if(!box)return;
+  const notPots=S.pots.filter(p=>p.group==='not'),umzPots=S.pots.filter(p=>p.group==='umz');
+  let notBal=notPots.reduce((s,p)=>s+potBalance(p),0),notTgt=notPots.reduce((s,p)=>s+(p.target||0),0);
+  let umzBal=umzPots.reduce((s,p)=>s+potBalance(p),0),umzTgt=umzPots.reduce((s,p)=>s+(p.target||0),0);
+  if(!notTgt&&!umzTgt){
+    box.innerHTML='<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--dim)">Kein Notgroschen- oder Umzug-Ziel hinterlegt (Topf mit Zielbetrag im Rücklagen-Tab anlegen).</td></tr>';
+    document.getElementById('wfHint').textContent='';
+    return;
+  }
+  let notFullAt=null,umzFullAt=null;
+  const rows=fcRows().map(r=>{
+    const surplus=r.inc-r.exp;
+    const notGap=Math.max(0,notTgt-notBal),toNot=Math.max(0,Math.min(surplus,notGap));
+    notBal+=toNot;
+    if(!notFullAt&&notTgt&&notBal>=notTgt-0.005)notFullAt=r.ym;
+    const rest=surplus-toNot;
+    const umzGap=Math.max(0,umzTgt-umzBal),toUmz=Math.max(0,Math.min(rest,umzGap));
+    umzBal+=toUmz;
+    if(!umzFullAt&&umzTgt&&umzBal>=umzTgt-0.005)umzFullAt=r.ym;
+    return{ym:r.ym,surplus,toNot,toUmz,toScalable:rest-toUmz};
+  });
+  document.getElementById('wfHint').textContent=[
+    notTgt?(notFullAt?`Notgroschen voll ab ${mLabel(notFullAt)}`:'Notgroschen nicht in 12 Mon. voll'):null,
+    umzTgt?(umzFullAt?`Umzug voll ab ${mLabel(umzFullAt)}`:'Umzug nicht in 12 Mon. voll'):null,
+  ].filter(Boolean).join(' · ');
+  box.innerHTML=rows.map(r=>`<tr>
+    <td class="dt">${mLabel(r.ym)}</td>
+    <td class="am ${r.surplus>=0?'p':'n'}">${eur(r.surplus)}</td>
+    <td class="am p">${r.toNot?eur(r.toNot):'—'}</td>
+    <td class="am p">${r.toUmz?eur(r.toUmz):'—'}</td>
+    <td class="am ${r.toScalable>0?'p':r.toScalable<0?'n':''}">${r.toScalable?eur(r.toScalable):'—'}</td>
+  </tr>`).join('');
 }
 function fcSet(id,f,v){
   const e=S.fc.events.find(x=>x.id===id);if(!e)return;
