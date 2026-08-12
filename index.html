@@ -425,6 +425,10 @@
             <button class="sm" id="bDriveSync" style="display:none">Jetzt synchronisieren</button>
             <span class="micro" id="driveStatus" style="flex:1;min-width:180px"></span>
           </div>
+          <div class="note" style="margin-bottom:14px">Alle Daten liegen ausschließlich in
+            diesem Browser — nicht auf einem Server. In einem privaten bzw. Inkognito-Fenster
+            sind sie beim Schließen des Fensters unwiederbringlich weg; arbeite deshalb im
+            normalen Fenster und leg über „Daten sichern“ ab und zu eine Kopie an.</div>
           <div id="catB"></div>
         </div>
       </div>
@@ -2229,10 +2233,18 @@ document.getElementById('bPaste').onclick=()=>{
 };
 
 /* ============ Google Drive ============ */
-// Alles clientseitig, kein eigener Server. Scope bewusst drive.file statt drive.readonly:
-// die App bekommt über den Picker nur Zugriff auf den einen gewählten Ordner, nie den ganzen Drive.
-// Client-ID, Ordner-ID und die Liste bereits importierter Datei-IDs bleiben ausschließlich lokal (S.drive).
-const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+// Alles clientseitig, kein eigener Server. Client-ID, Ordner-ID und die Liste bereits
+// importierter Datei-IDs bleiben ausschließlich lokal (S.drive).
+//
+// Scope-Historie, damit das nicht wieder zurückgedreht wird: Ursprünglich stand hier
+// drive.file mit der Annahme, ein über den Picker gewählter *Ordner* gebe auch Zugriff auf
+// die Dateien darin. Das ist falsch — drive.file ist ausdrücklich „per-file access" und gilt
+// nur für einzeln ausgewählte Dateien. Die Folge: files.list lieferte für den Ordner eine
+// leere Liste, der Sync meldete „keine neuen Dateien" und es passierte nie etwas.
+// drive.readonly ist der einzige Weg, einen Ordner automatisch einzulesen. Die App liest
+// selbst ausschließlich den gewählten Ordner (driveWalk ab S.drive.folderId) und schreibt
+// nie — das ist eine Selbstbeschränkung im Code, technisch erlaubt der Scope mehr.
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.readonly';
 let driveTokenClient=null;
 function renderDriveUI(){
   const ci=document.getElementById('driveClientId');
@@ -2242,10 +2254,15 @@ function renderDriveUI(){
   document.getElementById('bDriveDisconnect').style.display=connected?'':'none';
   document.getElementById('bDriveSync').style.display=connected?'':'none';
   const st=document.getElementById('driveStatus');
-  if(!st.dataset.busy)st.textContent=connected?`Verbunden: ${S.drive.folderName}`:'';
+  // sticky: eine abgeschlossene Meldung (Ergebnis oder Fehler) stehen lassen. Ohne das
+  // überschrieb dieser Aufruf die Meldung unmittelbar nach dem Sync wieder mit
+  // „Verbunden: …" — für den Nutzer sah jeder Sync so aus, als passiere gar nichts.
+  if(!st.dataset.busy&&!st.dataset.sticky)st.textContent=connected?`Verbunden: ${S.drive.folderName}`:'';
 }
 function driveSetStatus(msg,busy){
-  const st=document.getElementById('driveStatus');st.textContent=msg;st.dataset.busy=busy?'1':'';
+  const st=document.getElementById('driveStatus');
+  st.textContent=msg;st.dataset.busy=busy?'1':'';
+  st.dataset.sticky=(!busy&&msg)?'1':'';
 }
 function driveLoadScript(src){
   return new Promise((res,rej)=>{
@@ -2273,7 +2290,18 @@ function driveGetToken(prompt){
     if(!S.drive.clientId){reject(new Error('Keine Client-ID hinterlegt'));return}
     try{await driveEnsureGis()}catch(e){reject(e);return}
     const tc=driveTokenClientFor(S.drive.clientId);
-    tc.callback=resp=>{if(resp.error)reject(new Error(resp.error));else resolve(resp.access_token)};
+    tc.callback=resp=>{
+      if(resp.error){reject(new Error(resp.error_description||resp.error));return}
+      // Ein noch gültiger Token aus der Zeit vor dem Scope-Wechsel trägt die neue
+      // Leseberechtigung nicht. Das hier abfangen, statt später an einem 403 zu scheitern,
+      // dessen Ursache niemand mehr erkennt.
+      const g=window.google&&google.accounts&&google.accounts.oauth2;
+      if(g&&g.hasGrantedAllScopes&&!g.hasGrantedAllScopes(resp,DRIVE_SCOPE)){
+        reject(new Error('Lesezugriff wurde nicht erteilt — bitte „Ordner wechseln“ drücken und zustimmen'));
+        return;
+      }
+      resolve(resp.access_token);
+    };
     tc.requestAccessToken({prompt});
   });
 }
@@ -2311,7 +2339,12 @@ async function driveListFolder(folderId,token){
     const q=encodeURIComponent(`'${folderId}' in parents and trashed=false`);
     const url=`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=200${pageToken?'&pageToken='+pageToken:''}`;
     const r=await fetch(url,{headers:{Authorization:'Bearer '+token}});
-    if(!r.ok)throw new Error('Drive-Liste fehlgeschlagen ('+r.status+')');
+    // Googles eigenen Fehlertext mitnehmen — ohne ihn ist ein 403 nicht davon zu
+    // unterscheiden, ob die Drive API im Projekt aus ist oder der Scope nicht reicht.
+    if(!r.ok){
+      let d='';try{const j=await r.json();d=(j.error&&j.error.message)||''}catch(_){}
+      throw new Error(`Drive-Liste fehlgeschlagen (HTTP ${r.status})${d?': '+d:''}`);
+    }
     const j=await r.json();
     files=files.concat(j.files||[]);pageToken=j.nextPageToken;
   }while(pageToken);
@@ -2337,15 +2370,31 @@ async function driveRunSync(token){
     const entries=await driveWalk(S.drive.folderId,token);
     S.drive.imported=S.drive.imported||{};
     const neu=entries.filter(e=>!S.drive.imported[e.id]);
-    if(!neu.length){driveSetStatus('Verbunden: '+S.drive.folderName+' — keine neuen Dateien',false);renderDriveUI();return}
-    driveSetStatus(`Lade ${neu.length} Datei(en) aus Drive …`,true);
+    // Zwei sehr verschiedene Fälle, die vorher beide als „keine neuen Dateien" endeten:
+    // gar keine Datei sichtbar (Google gibt für den Ordner nichts heraus — typischerweise
+    // weil der drive.file-Scope nur einzeln ausgewählte Dateien freigibt) versus alle
+    // Dateien bereits importiert. Ohne diese Unterscheidung ist der Fehler nicht auffindbar.
+    if(!entries.length){
+      driveSetStatus(`Google gibt für „${S.drive.folderName}" keine Dateien heraus `
+        +`(0 gefunden). Das liegt an der Zugriffsart, nicht am Ordner.`,false);
+      renderDriveUI();return;
+    }
+    if(!neu.length){
+      driveSetStatus(`${entries.length} Datei(en) im Ordner, alle bereits importiert.`,false);
+      renderDriveUI();return;
+    }
+    driveSetStatus(`Lade ${neu.length} von ${entries.length} Datei(en) aus Drive …`,true);
     const files=[];
     for(const e of neu)files.push(new File([await driveDownload(e.id,token)],e.name,{type:e.mimeType}));
     await handleFiles(files);
     neu.forEach(e=>S.drive.imported[e.id]=true);
     save();
-  }catch(err){toast('Drive-Sync-Fehler: '+err.message)}
-  finally{driveSetStatus('',false);renderDriveUI()}
+    driveSetStatus(`${neu.length} Datei(en) aus Drive eingelesen.`,false);
+  }catch(err){
+    driveSetStatus('Drive-Fehler: '+err.message,false);
+    toast('Drive-Sync fehlgeschlagen — Details stehen neben dem Button');
+  }
+  finally{renderDriveUI()}
 }
 async function driveManualSync(){
   if(!S.drive.folderId){toast('Erst einen Ordner verbinden');return}
@@ -2353,7 +2402,10 @@ async function driveManualSync(){
     driveSetStatus('Google-Anmeldung …',true);
     const token=await driveGetToken('');
     await driveRunSync(token);
-  }catch(err){driveSetStatus('',false);toast('Google-Anmeldung nötig — bitte erneut versuchen')}
+  }catch(err){
+    driveSetStatus('Anmeldung fehlgeschlagen: '+(err.message||'unbekannt'),false);
+    renderDriveUI();
+  }
 }
 // Beim Start: nur ein stiller Versuch, ohne Anmelde-Fenster. Klappt das nicht (z.B. weil der
 // Browser das Popup blockt), bleibt einfach der manuelle „Jetzt synchronisieren“-Button übrig.

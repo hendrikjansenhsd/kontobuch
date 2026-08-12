@@ -26,9 +26,16 @@ optionale Google-Drive-Anbindung zum automatischen Einlesen von Auszügen.
   ausnahmsweise innerhalb einer Claude-Artifact-Umgebung statt lokal geöffnet wird.
 - Tabs: Dashboard, Buchungen, Rücklagen, Zuordnen, Forecast, Kategorien.
 - Google Drive: optionale, rein clientseitige OAuth-Anbindung (Google Identity
-  Services + Picker API), scope bewusst `drive.file` statt `drive.readonly` — die App
-  bekommt nur Zugriff auf den einen vom Nutzer gewählten Ordner, nie den ganzen Drive.
-  Client-ID/Ordner/importierte Datei-IDs liegen nur in `S.drive`, nie im Code.
+  Services + Picker API), Scope **`drive.readonly`**. Client-ID/Ordner/importierte
+  Datei-IDs liegen nur in `S.drive`, nie im Code.
+  **Nicht auf `drive.file` zurückdrehen.** Dort stand ursprünglich `drive.file` mit der
+  Annahme, ein per Picker gewählter *Ordner* gebe auch Zugriff auf die Dateien darin. Das
+  ist falsch: `drive.file` ist ausdrücklich „per-file access" und gilt nur für einzeln
+  ausgewählte Dateien. `files.list` lieferte für den Ordner deshalb eine leere Liste — der
+  Sync lief technisch fehlerfrei durch und tat nichts. Wer den Scope aus Datenschutzgründen
+  wieder verengen will, muss gleichzeitig auf Einzeldatei-Auswahl im Picker umstellen und
+  das automatische Nachladen aufgeben. Die App liest selbst nur den gewählten Ordner
+  (`driveWalk` ab `S.drive.folderId`) und schreibt nie — Selbstbeschränkung im Code.
 
 ## Datenmodell (State `S`)
 - `S.tx`: Buchungen — `{id, acc, date, merchant, note, amt, cat, sub, manual, biz, ign, tr, pot}`
@@ -59,6 +66,16 @@ optionale Google-Drive-Anbindung zum automatischen Einlesen von Auszügen.
 - Eigener Name/Adresse/IBAN **nie** im Code — führte einmal dazu, dass private Daten im (für GitHub gedachten) Quelltext standen. Jetzt ausschließlich über `S.me`, lokal im Browser gepflegt.
 - **Kurze Keywords kollidieren mit Standard-Buchungstext, nicht nur mit Referenznummern.** Bug gefunden: `'ASI '` (Kurs-Kategorie) matchte als Substring in „B**ASI**slastschrift" — betraf potenziell *jede* sonst unkategorisierte Lastschrift, nicht nur den gemeldeten Einzelfall. Bei neuen Keywords ≤4 Zeichen immer gegen gängige Buchungstext-Bausteine prüfen (Basislastschrift, Kartenzahlung girocard, Überweisungsgutschrift, IBAN/EREF/MREF/…), nicht nur gegen den einen gemeldeten Fall.
 - `suggest()` filtert Referenznummern (IBAN/EREF/MREF/CRED/BIC/Auftragsnummer) über `stripRefNoise()` vorm Matching raus — ohne das matchten kurze Keywords zufällig innerhalb von Mandatsreferenzen.
+- **Statusmeldungen wurden von ihrem eigenen Re-Render weggeputzt.** `driveRunSync()` setzte
+  das Ergebnis in die Statuszeile, das direkt danach aufgerufene `renderDriveUI()` ersetzte
+  es sofort wieder durch „Verbunden: …". Für den Nutzer sah jeder Sync so aus, als passiere
+  gar nichts — und die entscheidende Meldung („0 Dateien gefunden") war unsichtbar. Jetzt
+  markiert `driveSetStatus` abgeschlossene Meldungen als `sticky`. Lehre: Wenn eine Aktion
+  eine Meldung setzt und danach eine Render-Funktion läuft, prüfen, ob die Render-Funktion
+  dasselbe Element neu schreibt.
+- **Bei Netzwerkfehlern immer den Originaltext des Dienstes mitnehmen.** `Drive-Liste
+  fehlgeschlagen (403)` allein lässt nicht unterscheiden, ob die Drive API im Cloud-Projekt
+  deaktiviert ist oder der Scope nicht reicht — Googles `error.message` sagt es genau.
 - **Im UI aufgerufene Funktion war nie definiert.** `setPot(id,val)` wurde vom Dropdown „Entnahmen zuordnen" per `onchange` aufgerufen, existierte aber nicht — jede Auswahl lief in einen `ReferenceError`, es ließ sich also **keine einzige Entnahme zuordnen**. Das fiel lange nicht auf, weil der Bestand damals ohnehin geschätzt wurde und die fehlende Zuordnung nichts sichtbar veränderte. Lehre: Bei `onclick`/`onchange`-Handlern in Template-Strings prüft nichts, ob die Funktion existiert — nach dem Bauen einer neuen UI-Aktion den Handler einmal wirklich auslösen, nicht nur die Kachel ansehen. `grep -c 'function <name>'` ist der billige Check.
 - Duplikate Keyword über zwei Kategorien (z. B. „DEBEKA" gleichzeitig bei Kranken und Unfall) sind nicht zuverlässig auflösbar, wenn dieselbe Handelsregister-/Vereinsbezeichnung für unterschiedliche Vertragsarten steht — im Zweifel den Nutzer fragen, ob es wirklich nur eine Bedeutung hat, bevor das Keyword verschoben statt dupliziert wird.
 
@@ -309,8 +326,21 @@ Nutzers, nichts davon landet je im Code oder in Commits.
   zufällig ein längeres Keyword im selben Text steht. Ein Fix an der **Matching-Logik**
   (Wortgrenzen) würde sofort auch Hendriks bestehende Keywords heilen; ein Fix an
   `DEFAULT_CATS` wirkt nur auf Neuanlagen.
-- Google Drive: Client-ID wurde erzeugt, Verbindungsaufbau (OAuth + Ordnerauswahl)
-  war zuletzt noch nicht gemeinsam live getestet (nur Code-seitig verifiziert).
+- **Google Drive: live noch nicht erfolgreich durchgelaufen.** OAuth und Ordnerauswahl
+  funktionieren (Client-Typ „web", Origin `https://hendrikjansenhsd.github.io` ist in der
+  Cloud Console eingetragen), aber der Datei-Sync lieferte nichts — Ursache war der
+  `drive.file`-Scope, jetzt auf `drive.readonly` umgestellt. Beim ersten Versuch danach ist
+  **einmal „Ordner wechseln" nötig**, damit Google die neue Berechtigung abfragt; ein alter
+  Token wird erkannt und mit genau diesem Hinweis abgelehnt. Falls es dann noch scheitert,
+  zeigt die Statuszeile Googles Originalfehler — die zwei wahrscheinlichen Kandidaten sind
+  dann eine im Cloud-Projekt **nicht aktivierte Drive API** (Picker API und Drive API sind
+  getrennte Schalter) oder ein OAuth-Zustimmungsbildschirm im Modus „Testing", in dem
+  Hendriks Konto nicht als Test-Nutzer eingetragen ist.
+- **Nicht im Inkognito-Fenster arbeiten.** Dort ist `localStorage` leer und beim Schließen
+  weg. Hendrik hat das einmal getan (in der Annahme, der Browser-Cache liefere eine
+  veraltete App-Version) und dachte, seine Daten seien verloren. Die App-Datei kommt immer
+  frisch vom Server; die Daten liegen davon getrennt pro Browserprofil. Im Kategorien-Tab
+  steht dazu jetzt ein Hinweis.
 - Scalable-Capital-Steuerpauschale: bewusst als „fester Topf mit manuell jährlich
   aktualisiertem Betrag" modelliert, kein automatisches Auslesen des Depotwerts.
 - Mobile Nutzung: kein Sync zwischen Geräten außer JSON-Sicherung oder Google Drive.
